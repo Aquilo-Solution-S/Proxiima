@@ -9,7 +9,7 @@ use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
 use crate::sidecars::int_to_u64;
 
-/// `Proxiima.Query.countedVersions`. Joining live Memory omits all-forgotten series.
+/// Count one live readable head per Memory series. Joining live Memory omits all-forgotten series.
 ///
 /// `read_owners` is the one owner predicate. The per-kind narrowing is the
 /// owner RLS on `memory_head` and `goal_head` under the caller's bound scope;
@@ -23,7 +23,6 @@ pub(crate) async fn count_memories_on_connection(
         .copied()
         .map(OwnerId::into_inner)
         .collect();
-    // `Proxiima.Query.HeadCounts`. Unseen kinds keep their zero defaults.
     let mut counts = MemoryCounts::default();
 
     let heads: Vec<(PgMemoryKind, i64)> = sqlx::query_as(
@@ -55,6 +54,7 @@ pub(crate) async fn count_memories_on_connection(
         *counts.slot(EntityKind::from(kind)) += int_to_u64(count, "row count")?;
     }
 
+    // A Goal counts once per series in any state.
     let goals: i64 = sqlx::query_scalar(
         "WITH candidates AS (
              SELECT handle FROM proxiima_core.goal_head

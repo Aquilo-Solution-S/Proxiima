@@ -126,16 +126,27 @@ pub(crate) async fn load_inbound_pin_nodes_on_connection(
         ));
     }
     let ids: Vec<uuid::Uuid> = query.targets.iter().map(|id| id.into_inner()).collect();
-    let owner_ids = owner_ids(read_owners);
-    let sql = inbound_pin_sql(query.supersession, query.kind, query.target_kind);
-    let rows: Vec<PinNodeRow> = sqlx::query_as(sql)
+    let owner_ids: Vec<_> = read_owners
+        .iter()
+        .copied()
+        .filter(|owner| query.owner.is_none_or(|selected| *owner == selected))
+        .map(OwnerId::into_inner)
+        .collect();
+    let sql = inbound_pin_sql(
+        query.supersession,
+        query.kind,
+        query.target_kind,
+        query.memory_kind.is_some(),
+    );
+    let mut rows = sqlx::query_as::<_, PinNodeRow>(sql)
         .bind(&ids)
         .bind(&owner_ids)
         .bind(query.after.map(MemoryId::into_inner))
-        .bind(i64::from(query.limit))
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(map_err)?;
+        .bind(i64::from(query.limit));
+    if let Some(kind) = query.memory_kind {
+        rows = rows.bind(PgMemoryKind::from(kind));
+    }
+    let rows = rows.fetch_all(&mut *connection).await.map_err(map_err)?;
     Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
@@ -147,7 +158,7 @@ pub fn inbound_pin_sql_for_tests(
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
 ) -> SqlText {
-    inbound_pin_sql(supersession, kind, target_kind)
+    inbound_pin_sql(supersession, kind, target_kind, false)
 }
 
 /// The page of pin carriers that pin any of `$1` through a column holding
@@ -157,6 +168,7 @@ fn inbound_pin_sql(
     supersession: SupersessionStatus,
     kind: Option<EdgeKind>,
     target_kind: PinTargetKind,
+    filter_memory_kind: bool,
 ) -> SqlText {
     let heads_only = match supersession {
         SupersessionStatus::HeadsOnly => {
@@ -182,10 +194,12 @@ fn inbound_pin_sql(
         .push_text(&pin_fields::inbound_overlap("m.", target_kind, kind))
         .push(
             "
-                    AND ($3::uuid IS NULL OR m.t < $3)
-                  ORDER BY m.t DESC
-                  LIMIT $4",
+                    AND ($3::uuid IS NULL OR m.t < $3)",
         );
+    if filter_memory_kind {
+        sql.push(" AND m.kind = $5");
+    }
+    sql.push(" ORDER BY m.t DESC LIMIT $4");
     sql
 }
 

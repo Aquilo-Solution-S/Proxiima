@@ -154,6 +154,8 @@ async fn query_neighbors_edges_and_lineage_use_pins() {
                 Some(&owner_scope_for_tests(&[owner])),
                 &[owner],
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &[leaf.memory_id],
                     target_kind: PinTargetKind::Memory,
                     kind: None,
@@ -454,6 +456,8 @@ async fn inbound_pin_page_is_newest_heads_and_keyset() {
                 Some(&owner_scope_for_tests(&[owner])),
                 &[owner],
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &[hub.memory_id],
                     target_kind: PinTargetKind::Memory,
                     kind: Some(EdgeKind::Origin),
@@ -477,6 +481,8 @@ async fn inbound_pin_page_is_newest_heads_and_keyset() {
                 Some(&owner_scope_for_tests(&[owner])),
                 &[owner],
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &[hub.memory_id],
                     target_kind: PinTargetKind::Memory,
                     kind: Some(EdgeKind::Origin),
@@ -540,6 +546,8 @@ async fn inbound_heads_only_drops_superseded_pin() {
                 Some(&owner_scope_for_tests(&[owner])),
                 &[owner],
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &[hub.memory_id],
                     target_kind: PinTargetKind::Memory,
                     kind: Some(EdgeKind::Origin),
@@ -561,6 +569,8 @@ async fn inbound_heads_only_drops_superseded_pin() {
                 Some(&owner_scope_for_tests(&[owner])),
                 &[owner],
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &[hub.memory_id],
                     target_kind: PinTargetKind::Memory,
                     kind: Some(EdgeKind::Origin),

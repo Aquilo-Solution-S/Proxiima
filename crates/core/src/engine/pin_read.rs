@@ -366,6 +366,8 @@ async fn load_incoming_sources(
                 owner_scope,
                 read_owners,
                 InboundPinQuery {
+                    owner: None,
+                    memory_kind: None,
                     targets: &targets,
                     // The inbound target carries its own kind, and a Goal is
                     // only ever pinned from `goal_refs` or `guided_by`. Naming the columns
@@ -423,6 +425,8 @@ pub(in crate::engine) async fn neighbor_edges_from_nodes(
             owner_scope,
             read_owners,
             InboundPinQuery {
+                owner: None,
+                memory_kind: None,
                 targets: memory_ids,
                 target_kind: PinTargetKind::Memory,
                 kind: None,

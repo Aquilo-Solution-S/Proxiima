@@ -91,7 +91,8 @@ Reads return committed rows admitted by owner or Goal authority. A `t` identifie
 different operations. A Goal handle read returns its current head; explicit
 version selectors can retrieve historical rows. An explicit `space` on
 `core_get_memory` must be readable, including when the memory comes from
-another store.
+another store. When `space` is omitted, only the local route requires read
+access to the session's own space.
 
 Search hits and single and batch memory reads report the stored `owner` UUID
 independently of the writer. Local `space` labels that home owner: `current` for the session's

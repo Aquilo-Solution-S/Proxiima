@@ -5391,11 +5391,6 @@ stateDiagram-v2
 - remote
 - unknown
 
-**Space label**: The public labels for a known Memory owner.
-
-- current
-- ownerUuid
-
 **Remote outcome**: The result of looking up a requested version through its issuing store.
 
 - found
@@ -5483,7 +5478,7 @@ stateDiagram-v2
 - perspective
 - goal
 
-**Exact filter**: A .mixedmpty exact filter selects Goal handles, Fact references to Goals, or tags.
+**Exact filter**: A nonempty exact filter selects Goal handles, Fact references to Goals, or tags.
 
 - goalHandles
 - referencedGoalHandles
@@ -5506,11 +5501,6 @@ stateDiagram-v2
 - unmotivated
 - matchingPerspectives
 
-**Goal time source**: Derive a Goal version's changed time from its admission and its set time from the earliest admission.
-
-- earliestAdmission
-- returnedAdmission
-
 **Read surface**: The two authority gates used by row reads and the graph overview.
 
 - rows
@@ -5520,12 +5510,6 @@ stateDiagram-v2
 
 - loadVisibleEntriesTogether
 - authorizeInRequestOrder
-
-**Graph readiness**: Graph readiness reports current client routing separately from retryable and terminal embedding work.
-
-- embeddings client configured
-- pending embedding jobs
-- failed embedding jobs
 
 **Limit input**: A page limit before defaulting or clamping.
 
@@ -5553,19 +5537,6 @@ stateDiagram-v2
 - blank
 - tooLong
 
-**Head counts**: A count reply has a separate field for each entity kind.
-
-- facts
-- abstractions
-- perspectives
-- goals
-
-**Query instruction**: An optional instruction supplies a template when it is configured and leaves a bare query otherwise.
-
-- unchanged
-- substituteQuery
-- refuseMissingPlaceholder
-
 **remote timeout seconds** = 2: The default per-store request timeout in seconds.
 
 **remote batch deadline seconds** = 10: The shared deadline in seconds for an origin batch.
@@ -5586,8 +5557,6 @@ stateDiagram-v2
 
 **owner page stages** = \[filterVisibleRows, limitPerOwner, mergeAndLimit]: Apply visibility and query predicates before each owner limit, then merge and bound the page.
 
-**goal time sources** = \[earliestAdmission, returnedAdmission]: The admission sources of Goal set and change timestamps, in that order.
-
 **entry authorization** = \[loadVisibleEntriesTogether, authorizeInRequestOrder]: Fetch visibility in one batch and then authorize each entry in request order.
 
 **default page limit** = 50: Default size of a common ordered page when the caller omits its limit.
@@ -5598,8 +5567,6 @@ stateDiagram-v2
 
 **max query chars** = 512: Maximum accepted query length in characters after trimming.
 
-**max text cap chars** = 8000: Maximum text cap a caller may request in a search result, in characters.
-
 **default recall limit** = 16: Default number of sketches returned by recall.
 
 **max recall limit** = 32: Maximum number of sketches returned by recall.
@@ -5607,10 +5574,6 @@ stateDiagram-v2
 **max recall subjects** = 16: Maximum number of subjects in a recall cue.
 
 **sketch chars** = 160: Maximum characters in a local recall sketch.
-
-**counted versions** = headsOnly: A count row refers to the latest live readable admission per series.
-
-**query placeholder** = "{query}": The literal placeholder replaced with the search text in a configured embedding instruction.
 
 | history | live | visible head | includes version |
 | --- | --- | --- | --- |
@@ -5632,7 +5595,7 @@ stateDiagram-v2
 | no | yes | yes |
 | no | no | no |
 
-- validate read space: Check explicit space on either route, and default to the current space on the local route.
+- validate read space: Check the space on the local route or when a space is supplied explicitly.
 
 | read owner | space label |
 | --- | --- |
@@ -5709,7 +5672,7 @@ stateDiagram-v2
 | pageSize | excluded |
 | presentation | excluded |
 
-- cursor binding: Page size and search presentation are excluded, while filters and order bind the keyset.
+- cursor binding: Filters and order bind the fingerprint, the resume position forms the keyset, and page size and presentation are excluded.
 
 | cursor kind | stream | cursor matches stream |
 | --- | --- | --- |
@@ -5765,7 +5728,7 @@ stateDiagram-v2
 | fact | 1 |
 | abstraction | 1 |
 | perspective | 1 |
-| goal | 0 |
+| goal | 1 |
 
 - memory page extra rows: Fetch one extra row for an exhaustion witness in single-stream ordered reads.
 
@@ -5846,15 +5809,6 @@ stateDiagram-v2
 | no | no | no |
 
 - recall has cue: Recall requires a nonblank question or at least one subject.
-
-| configured | has placeholder | query instruction |
-| --- | --- | --- |
-| yes | yes | substituteQuery |
-| yes | no | refuseMissingPlaceholder |
-| no | yes | unchanged |
-| no | no | unchanged |
-
-- query instruction: Refuse a configured instruction without the query placeholder.
 
 ## Repository
 
@@ -6932,12 +6886,6 @@ Causa — Memory
 - Premise **guided by only perspective**: Restriction of Goal guidance to Perspectives.
 - Premise **fact origins empty**: Exclusion of grounding origins from Facts.
 - Premise **blob kind admitted**: A cited version satisfies `Proxiima.Citations.citationAllowed`.
-
-✓ **readable head is newest** (axioms: none): A head read cannot return a result with a newer readable admission in the same series.
-
-✓ **has more iff continuation** (axioms: `propext`, `Quot.sound`): The wire has-more flag agrees with the presence of its continuation.
-
-✓ **batch partition keeps order** (axioms: `propext`): A batch partition preserves the request order after duplicate IDs collapse.
 
 ✓ **restore forget** (axioms: `propext`): Forget followed by an admitted restore recovers the original live Memory row.
 

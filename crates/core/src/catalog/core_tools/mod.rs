@@ -51,6 +51,7 @@ pub(crate) const MAX_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Query.maxPageLimi
 
 /// `Proxiima.Query.pageLimit`.
 pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::ToolError> {
+    // Shared with the spiice tool trait so zero is refused on both surfaces.
     crate::reject_zero_limit(limit)?;
     Ok(limit.unwrap_or(DEFAULT_PAGE_LIMIT).min(MAX_PAGE_LIMIT))
 }

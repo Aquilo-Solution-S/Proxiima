@@ -188,25 +188,6 @@ def selectsReadableMemory
       ∀ candidate, candidate ∈ readable → candidate.handle = source.handle →
         ¬ newer candidate result
 
-/-- A head read cannot return a result with a newer readable admission in the same series. -/
-theorem readable_head_is_newest {readable : Set Memory} {newer : Memory → Memory → Prop}
-    {source result candidate : Memory}
-    (selected : selectsReadableMemory .seriesHead readable newer source result)
-    (visible : candidate ∈ readable) (sameSeries : candidate.handle = source.handle) :
-    ¬ newer candidate result :=
-  selected.2.2.2 candidate visible sameSeries
-
-/-- The wire has-more flag agrees with the presence of its continuation. -/
-theorem has_more_iff_continuation {α : Type} (cursor : Option α) :
-    (cursor.isSome = true) ↔ (∃ key, cursor = some key) := by
-  cases cursor <;> simp
-
-/-- A batch partition preserves the request order after duplicate IDs collapse. -/
-theorem batch_partition_keeps_order {α : Type} [BEq α]
-    (ids : List α) (inPartition : α → Bool) :
-    (ids.eraseDups.filter inPartition).Sublist ids.eraseDups :=
-  List.filter_sublist
-
 /-- Setting the forgotten mark on the Memory row. -/
 def Memory.forget (m : Memory) : Memory :=
   { m with forgotten := true }

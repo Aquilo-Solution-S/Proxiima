@@ -123,7 +123,6 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
         }
         QueryCursor::Memory { .. } => None,
     });
-    // `Causa.has_more_iff_continuation`.
     let has_more = next_cursor.is_some();
     Ok(ListGoalsOutput {
         goals,

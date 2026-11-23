@@ -96,6 +96,7 @@ impl FakePins {
         let mut rows: Vec<PinNode> = self
             .nodes
             .iter()
+            .filter(|node| query.memory_kind.is_none_or(|kind| node.kind == kind))
             .filter(|node| {
                 // Mirrors the backend: reference hops onto a Goal target
                 // come from `goal_refs`, onto a Memory target from `refs`.

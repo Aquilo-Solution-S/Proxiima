@@ -466,19 +466,26 @@ theorem goal_tree_acyclic :
 def ownerPerspectives (memories : Set Memory) (o : Owner) : Set Memory :=
   fun m => m ∈ memories ∧ memory_owner m = o ∧ memory_kind m = .Perspective
 
-/-- Relevance of an admission to a retrieval cue. -/
+/-- The cue names the admission or one of its Memory pins, including read influence and fork lineage. -/
 def cueTouches (m : Memory) (cue : Cue) : Prop :=
   memory_t m ∈ cue ∨
-  (∃ id : MemoryId, id ∈ cue ∧ (id ∈ memory_origins m ∨ id ∈ memory_refs m))
+  ∃ id : MemoryId, id ∈ cue ∧
+    (id ∈ memory_origins m ∨ id ∈ memory_refs m ∨ id ∈ memory_reads m ∨
+      memory_forked_from m = some id)
 
-/-- The owner's current Perspectives selected by a retrieval cue. -/
+/-- The owner's live, readable Perspective heads touched by the cue or matched by the question. -/
 def situatedSelf
-    (memories : Set Memory) (heads : Set MemoryHead)
-    (o : Owner) (cue : Cue) : Set Memory :=
+    (readable goalVisible : Set Memory) (heads : Set MemoryHead)
+    (o : Owner) (cue : Cue) (questionMatches : Set Memory) : Set Memory :=
   fun m =>
-    m ∈ ownerPerspectives memories o ∧
-    memoryIsHead memories heads m ∧
-    cueTouches m cue
+    m ∈ ownerPerspectives readable o ∧ memory_forgotten m = false ∧
+    (memoryIsHead readable heads m ∨
+      (m ∈ goalVisible ∧ ∀ later : Memory,
+        later ∈ readable → memory_forgotten later = false →
+        memory_handle later = memory_handle m →
+        (later ∈ goalVisible ∨ memoryIsHead readable heads later) →
+        memory_tick m ≥ memory_tick later)) ∧
+    (cueTouches m cue ∨ m ∈ questionMatches)
 
 def RetainedGoalAssignmentValid
     (goals : Set Goal) (memories : Set Memory)

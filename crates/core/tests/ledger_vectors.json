@@ -165,11 +165,6 @@
   {"out": true, "in": [true, false]},
   {"out": true, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Query.queryInstruction":
- [{"out": "substituteQuery", "in": [true, true]},
-  {"out": "refuseMissingPlaceholder", "in": [true, false]},
-  {"out": "unchanged", "in": [false, true]},
-  {"out": "unchanged", "in": [false, false]}],
  "Proxiima.Query.permitsReadSurface":
  [{"out": true, "in": ["rows", true, true]},
   {"out": true, "in": ["rows", true, false]},
@@ -198,7 +193,7 @@
   {"out": 1, "in": ["fact"]},
   {"out": 1, "in": ["abstraction"]},
   {"out": 1, "in": ["perspective"]},
-  {"out": 0, "in": ["goal"]}],
+  {"out": 1, "in": ["goal"]}],
  "Proxiima.Query.matchesTags":
  [{"out": true, "in": ["any", true, true]},
   {"out": true, "in": ["any", true, false]},

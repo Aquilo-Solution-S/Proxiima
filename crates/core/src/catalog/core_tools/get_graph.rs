@@ -63,7 +63,6 @@ pub async fn get_graph(ctx: ToolCtx, _args: GetGraphArgs) -> Result<GetGraphOutp
 
     let substrate_tools = scoped_substrate_tools(&ctx);
 
-    // `Proxiima.Query.GraphReadiness`.
     Ok(GetGraphOutput {
         embeddings_client_configured,
         pending_embedding_jobs: graph.pending_embedding_jobs,

@@ -469,6 +469,7 @@ struct GraphStore {
     citing: uuid::Uuid,
     ancestor: uuid::Uuid,
     cursors: std::sync::Mutex<Vec<Option<String>>>,
+    reads: std::sync::atomic::AtomicUsize,
 }
 
 impl GraphStore {
@@ -479,6 +480,7 @@ impl GraphStore {
             citing: crate::new_memory_uuid(1),
             ancestor: crate::new_memory_uuid(1),
             cursors: std::sync::Mutex::new(Vec::new()),
+            reads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -527,6 +529,8 @@ impl OtherStores for GraphStore {
         id: uuid::Uuid,
         _at: ReadAt,
     ) -> BoxFuture<'a, Result<RemoteRead, OtherStoresError>> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let read = if id == self.memory {
             RemoteRead::Found(Box::new(RemoteMemory::fixture(id)))
         } else {
@@ -635,6 +639,8 @@ async fn a_remote_point_read_validates_space_and_reports_the_returned_owner() {
         error,
         ToolError::InvalidInput(message) if message == format!("unknown memory space: {unreadable}")
     ));
+
+    assert_eq!(store.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
 
     let output = get_memory(ctx, args(Some("current".into())))
         .await

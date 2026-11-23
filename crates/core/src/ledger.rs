@@ -725,10 +725,6 @@ macro_rules! ledger {
     (Proxiima.Query.maxQueryChars) => {
         512
     };
-    // Maximum text cap a caller may request in a search result, in characters.
-    (Proxiima.Query.maxTextCapChars) => {
-        8000
-    };
     // Default number of sketches returned by recall.
     (Proxiima.Query.defaultRecallLimit) => {
         16
@@ -744,10 +740,6 @@ macro_rules! ledger {
     // Maximum characters in a local recall sketch.
     (Proxiima.Query.sketchChars) => {
         160
-    };
-    // The literal placeholder replaced with the search text in a configured embedding instruction.
-    (Proxiima.Query.queryPlaceholder) => {
-        "{query}"
     };
     // Minimum age in seconds for stale test clones considered by the sweeper.
     (Proxiima.Repository.cloneGraceSeconds) => {

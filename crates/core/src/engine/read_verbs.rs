@@ -618,7 +618,7 @@ pub(in crate::engine) async fn get_memory_authorized(
     if read_owners.is_empty() {
         return Err(ProtocolError::not_found("memory not found"));
     }
-    // `Proxiima.Query.ReadAt`.
+    // `Causa.selectsReadableMemory`. A pin keeps its exact admission.
     let memory_id = match req.at {
         ReadAt::Version => req.memory_id,
         ReadAt::SeriesHead => ports

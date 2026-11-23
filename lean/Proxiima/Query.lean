@@ -1,3 +1,5 @@
+import Proxiima.OwnerAuthority
+
 /-! # Query -/
 
 namespace Proxiima.Query
@@ -20,7 +22,7 @@ def includesVersion : History → (live : Bool) → (visibleHead : Bool) → Boo
   | .headsOnly, true, false | .headsOnly, false, true | .headsOnly, false, false
   | .includeSuperseded, false, true | .includeSuperseded, false, false => false
 
-/-- Check explicit space on either route, and default to the current space on the local route. -/
+/-- Check the space on the local route or when a space is supplied explicitly. -/
 def validateReadSpace : (localStore : Bool) → (explicitSpace : Bool) → Bool
   | true, true | true, false | false, true => true
   | false, false => false
@@ -33,14 +35,8 @@ inductive ReadOwner where
   | unknown
   deriving DecidableEq
 
-/-- The public labels for a known Memory owner. -/
-inductive SpaceLabel where
-  | current
-  | ownerUuid
-  deriving DecidableEq
-
 /-- Label the stored owner with its key, or use null when the owner is unknown. -/
-def spaceLabel : ReadOwner → Option SpaceLabel
+def spaceLabel : ReadOwner → Option Proxiima.OwnerAuthority.SpaceKey
   | .currentLocal => some .current
   | .otherLocal | .remote => some .ownerUuid
   | .unknown => none
@@ -176,7 +172,7 @@ inductive CursorBinding where
   | excluded
   deriving DecidableEq
 
-/-- Page size and search presentation are excluded, while filters and order bind the keyset. -/
+/-- Filters and order bind the fingerprint, the resume position forms the keyset, and page size and presentation are excluded. -/
 def cursorBinding : CursorInput → CursorBinding
   | .resultFilter | .resultOrder => .fingerprint
   | .resumePosition => .keyset
@@ -219,7 +215,7 @@ def cursorMatchesStream : CursorKind → Stream → Bool
   | .memory, .mixed | .memory, .goal | .goal, .mixed
   | .goal, .fact | .goal, .abstraction | .goal, .perspective => false
 
-/-- A .mixedmpty exact filter selects Goal handles, Fact references to Goals, or tags. -/
+/-- A nonempty exact filter selects Goal handles, Fact references to Goals, or tags. -/
 inductive ExactFilter where
   | goalHandles
   | referencedGoalHandles
@@ -258,8 +254,8 @@ def ownerPageStages : List OwnerPageStage := [.filterVisibleRows, .limitPerOwner
 
 /-- Fetch one extra row for an exhaustion witness in single-stream ordered reads. -/
 def memoryPageExtraRows : Stream → Nat
-  | .fact | .abstraction | .perspective => 1
-  | .goal | .mixed => 0
+  | .fact | .abstraction | .perspective | .goal => 1
+  | .mixed => 0
 
 /-- An unrestricted motivation filter, no motivations, or a set of matching Perspectives. -/
 inductive Motivation where
@@ -276,15 +272,6 @@ def matchesMotivation : Motivation → (hasMotivation : Bool) → (intersects : 
   | .unmotivated, true, true | .unmotivated, true, false
   | .matchingPerspectives, true, false | .matchingPerspectives, false, true
   | .matchingPerspectives, false, false => false
-
-/-- Derive a Goal version's changed time from its admission and its set time from the earliest admission. -/
-inductive GoalTimeSource where
-  | earliestAdmission
-  | returnedAdmission
-  deriving DecidableEq
-
-/-- The admission sources of Goal set and change timestamps, in that order. -/
-def goalTimeSources : List GoalTimeSource := [.earliestAdmission, .returnedAdmission]
 
 /-- The two authority gates used by row reads and the graph overview. -/
 inductive ReadSurface where
@@ -308,12 +295,6 @@ inductive EntryAuthorizationStep where
 /-- Fetch visibility in one batch and then authorize each entry in request order. -/
 def entryAuthorization : List EntryAuthorizationStep :=
   [.loadVisibleEntriesTogether, .authorizeInRequestOrder]
-
-/-- Graph readiness reports current client routing separately from retryable and terminal embedding work. -/
-structure GraphReadiness where
-  embeddingsClientConfigured : Bool
-  pendingEmbeddingJobs : Nat
-  failedEmbeddingJobs : Nat
 
 /-- An ordered owner read needs read authority, and a row-locking read also needs write authority. -/
 def permitsOwnerVersionRead : (readable : Bool) → (lock : Bool) → (writable : Bool) → Bool
@@ -381,9 +362,6 @@ def maxBatchMemoryIds : Nat := 100
 /-- Maximum accepted query length in characters after trimming. -/
 def maxQueryChars : Nat := 512
 
-/-- Maximum text cap a caller may request in a search result, in characters. -/
-def maxTextCapChars : Nat := 8000
-
 /-- Default number of sketches returned by recall. -/
 def defaultRecallLimit : Nat := 16
 
@@ -400,31 +378,5 @@ def sketchChars : Nat := 160
 def recallHasCue : (hasQuestion : Bool) → (hasSubjects : Bool) → Bool
   | true, true | true, false | false, true => true
   | false, false => false
-
-/-- A count reply has a separate field for each entity kind. -/
-structure HeadCounts where
-  facts : Nat
-  abstractions : Nat
-  perspectives : Nat
-  goals : Nat
-
-/-- A count row refers to the latest live readable admission per series. -/
-def countedVersions : History := .headsOnly
-
-/-- The literal placeholder replaced with the search text in a configured embedding instruction. -/
-def queryPlaceholder : String := "{query}"
-
-/-- An optional instruction supplies a template when it is configured and leaves a bare query otherwise. -/
-inductive QueryInstruction where
-  | unchanged
-  | substituteQuery
-  | refuseMissingPlaceholder
-  deriving DecidableEq
-
-/-- Refuse a configured instruction without the query placeholder. -/
-def queryInstruction : (configured : Bool) → (hasPlaceholder : Bool) → QueryInstruction
-  | false, true | false, false => .unchanged
-  | true, true => .substituteQuery
-  | true, false => .refuseMissingPlaceholder
 
 end Proxiima.Query

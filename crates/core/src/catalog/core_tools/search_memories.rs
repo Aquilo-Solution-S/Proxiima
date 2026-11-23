@@ -1165,6 +1165,7 @@ fn decode_cursor(raw: &str, fingerprint: &str) -> Result<PageCursor, ToolError> 
 }
 
 /// `Proxiima.Query.cursorBinding`.
+/// The fingerprint binds each owner's scoring lane.
 /// Sorting tags and owner lanes makes equivalent filter sets fingerprint identically.
 fn query_fingerprint(
     query: &str,

@@ -451,6 +451,8 @@ async fn next_hop(
                     .inbound_pin_nodes(
                         ctx.authz(),
                         InboundPinQuery {
+                            owner: None,
+                            memory_kind: None,
                             targets: frontier,
                             target_kind: PinTargetKind::Memory,
                             kind: Some(kind),
@@ -510,6 +512,8 @@ async fn episode_siblings(
         .inbound_pin_nodes(
             ctx.authz(),
             InboundPinQuery {
+                owner: None,
+                memory_kind: None,
                 targets: &targets,
                 target_kind: PinTargetKind::Memory,
                 kind: Some(crate::EdgeKind::Reference),

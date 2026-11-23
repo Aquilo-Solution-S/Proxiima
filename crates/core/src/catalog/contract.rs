@@ -561,7 +561,7 @@ pub const MAX_QUERY_CHARS: usize = crate::ledger!(Proxiima.Query.maxQueryChars);
 /// Shared rather than copied so a spiice's cap cannot drift apart from
 /// core's unnoticed. Defaults are deliberately NOT shared: a short snippet
 /// and an 8,000-character memory body differ because the objects do.
-pub const MAX_TEXT_CAP_CHARS: usize = crate::ledger!(Proxiima.Query.maxTextCapChars);
+pub const MAX_TEXT_CAP_CHARS: usize = 8000;
 
 /// Trim `value` and check its length against `1..=max` characters,
 /// returning the trimmed text and naming the bound that was actually

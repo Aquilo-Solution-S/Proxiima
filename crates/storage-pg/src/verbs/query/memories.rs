@@ -20,6 +20,7 @@ use proxiima_core::PgIdent;
 
 use super::edges::query_edges;
 use super::goals::query_goals_on_connection;
+use super::page_fetch_limit;
 use super::rows::{MemoryRowDb, memory_row_from_db};
 
 /// Transaction-backed query path. Every statement, including typed sidecar
@@ -45,12 +46,11 @@ pub(crate) async fn query_memories_on_connection(
             next_cursor,
         });
     }
-    let single_memory_stream = is_single_memory_stream(req);
     let mut rows =
         fetch_memory_page_on_connection(connection, req, &owner_ids, schemas, sidecars).await?;
     let limit = usize::try_from(req.limit)
         .map_err(|_| StorageError::Internal("query limit does not fit usize".into()))?;
-    let next_memory_cursor = if single_memory_stream && rows.len() > limit {
+    let next_memory_cursor = if rows.len() > limit {
         rows.truncate(limit);
         rows.last().map(|row| QueryCursor::Memory {
             created_at: row.created_at,
@@ -330,24 +330,6 @@ fn memory_filters(
         });
     }
     Ok(filters)
-}
-
-/// Whether this request reads one memory stream, and so can be told a full
-/// page from an exhausted one by fetching a row past the limit.
-fn is_single_memory_stream(req: &QueryRequest) -> bool {
-    matches!(
-        req.entity_kind,
-        Some(EntityKind::Fact | EntityKind::Abstraction | EntityKind::Perspective)
-    )
-}
-
-fn page_fetch_limit(req: &QueryRequest) -> u64 {
-    // `Proxiima.Query.memoryPageExtraRows`.
-    if is_single_memory_stream(req) {
-        u64::from(req.limit) + 1
-    } else {
-        u64::from(req.limit)
-    }
 }
 
 /// Resolve each row's schema, verify its sidecar stamp, and project the page

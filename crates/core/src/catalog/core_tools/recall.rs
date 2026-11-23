@@ -143,7 +143,8 @@ async fn recall(ctx: ToolCtx, args: RecallArgs) -> Result<RecallOutput, ToolErro
 
     let mut packet = Packet::new();
     let mut degraded_to_lexical = false;
-    collect_subjects(&ctx, engine, &subjects, &mut packet).await?;
+    // `Causa.situatedSelf`.
+    collect_subjects(&ctx, engine, space.owner, &subjects, &mut packet).await?;
     collect_cue_touch(&ctx, engine, space.owner, &subjects, &mut packet).await?;
     if let Some(query) = question {
         degraded_to_lexical = collect_question(
@@ -172,6 +173,7 @@ async fn recall(ctx: ToolCtx, args: RecallArgs) -> Result<RecallOutput, ToolErro
 async fn collect_subjects(
     ctx: &ToolCtx,
     engine: &crate::Engine,
+    owner: crate::OwnerId,
     subjects: &[MemoryId],
     packet: &mut Packet,
 ) -> Result<(), ToolError> {
@@ -180,6 +182,9 @@ async fn collect_subjects(
     }
     let sketches = engine.load_sketches(ctx.authz(), subjects).await?;
     for sketch in sketches {
+        if sketch.kind == EntityKind::Perspective && sketch.owner != owner {
+            continue;
+        }
         packet.insert(ctx, &sketch, RecallReason::Subject);
         packet.set_head(sketch.id, sketch.kind != EntityKind::Perspective);
     }
@@ -203,6 +208,8 @@ async fn collect_cue_touch(
                 targets: subjects,
                 target_kind: PinTargetKind::Memory,
                 kind: None,
+                owner: Some(owner),
+                memory_kind: Some(crate::MemoryKind::Perspective),
                 supersession: SupersessionStatus::HeadsOnly,
                 after: None,
                 limit: MAX_LIMIT,
@@ -211,7 +218,7 @@ async fn collect_cue_touch(
         .await?;
     let touch_ids: Vec<MemoryId> = inbound
         .into_iter()
-        .filter(|node| node.kind == crate::MemoryKind::Perspective && !packet.contains(node.id))
+        .filter(|node| !packet.contains(node.id))
         .map(|node| node.id)
         .collect();
     if touch_ids.is_empty() {
@@ -219,9 +226,6 @@ async fn collect_cue_touch(
     }
     let sketches = engine.load_sketches(ctx.authz(), &touch_ids).await?;
     for sketch in sketches {
-        if sketch.owner != owner {
-            continue;
-        }
         packet.insert(ctx, &sketch, RecallReason::CueTouch);
         packet.set_head(sketch.id, true);
     }
@@ -503,9 +507,10 @@ impl Packet {
 
     fn finish(self, filter: Option<EntityKind>, limit: u32) -> Vec<RecallSketch> {
         let mut rows: Vec<Entry> = self.by_id.into_values().collect();
-        if let Some(filter) = filter {
-            rows.retain(|entry| kind_matches(filter, entry.kind, entry.is_head));
-        }
+        rows.retain(|entry| {
+            (entry.kind != EntityKind::Perspective || entry.is_head)
+                && filter.is_none_or(|filter| kind_matches(filter, entry.kind))
+        });
         rows.sort_by(|a, b| {
             a.reason
                 .cmp(&b.reason)
@@ -524,13 +529,11 @@ impl Packet {
     }
 }
 
-fn kind_matches(filter: EntityKind, kind: EntityKind, is_head: bool) -> bool {
+fn kind_matches(filter: EntityKind, kind: EntityKind) -> bool {
     match filter {
         EntityKind::Fact => kind == EntityKind::Fact,
         EntityKind::Abstraction => kind == EntityKind::Abstraction,
-        EntityKind::Perspective => {
-            (kind == EntityKind::Perspective && is_head) || kind == EntityKind::Goal
-        }
+        EntityKind::Perspective => matches!(kind, EntityKind::Perspective | EntityKind::Goal),
         EntityKind::Goal => kind == EntityKind::Goal,
     }
 }

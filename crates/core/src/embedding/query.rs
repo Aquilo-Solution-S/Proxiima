@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 /// The placeholder a [`QueryInstruction`] replaces with the query.
-pub const QUERY_PLACEHOLDER: &str = crate::ledger!(Proxiima.Query.queryPlaceholder);
+pub const QUERY_PLACEHOLDER: &str = "{query}";
 
 /// What a search is looking for, so a route can word the query for it.
 ///
@@ -53,7 +53,6 @@ impl QueryInstruction {
     /// every query would embed to the same vector.
     pub fn new(template: impl Into<String>) -> Result<Self, QueryInstructionError> {
         let template = template.into();
-        // `Proxiima.Query.queryInstruction`.
         if template.contains(QUERY_PLACEHOLDER) {
             Ok(Self(template))
         } else {
@@ -146,7 +145,6 @@ impl QueryInstructions {
     /// `query` as `task`'s embedding input.
     #[must_use]
     pub fn render(&self, query: &str, task: QueryTask) -> String {
-        // `Proxiima.Query.queryInstruction`.
         self.for_task(task)
             .map_or_else(|| query.to_owned(), |instruction| instruction.render(query))
     }

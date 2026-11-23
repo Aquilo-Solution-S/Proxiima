@@ -1,12 +1,13 @@
 use proxiima_core::verbs::goal_write::GoalState;
 use proxiima_core::verbs::query::{
-    EntityKind, GoalMotivationFilter, GoalRow, QueryCursor, QueryRequest, SupersessionStatus,
+    GoalMotivationFilter, GoalRow, QueryCursor, QueryRequest, SupersessionStatus,
 };
 use proxiima_core::{SqlText, StorageError};
 use sqlx::PgConnection;
 
 use crate::error::map_err;
 
+use super::page_fetch_limit;
 use super::rows::{GoalRowDb, goal_row_from_db};
 
 pub(super) async fn query_goals_on_connection(
@@ -18,7 +19,6 @@ pub(super) async fn query_goals_on_connection(
     if id_hydration && req.goal_ids.is_empty() {
         return Ok((Vec::new(), None));
     }
-    let single_goal_stream = matches!(req.entity_kind, Some(EntityKind::Goal));
     let visible_motivations = match &req.motivated_by {
         GoalMotivationFilter::MotivatedBy(ids) => {
             let candidates = ids.iter().map(|id| id.into_inner()).collect::<Vec<_>>();
@@ -47,7 +47,7 @@ pub(super) async fn query_goals_on_connection(
     let mut rows = q.fetch_all(&mut *connection).await.map_err(map_err)?;
     let limit = usize::try_from(req.limit)
         .map_err(|_| StorageError::Internal("query limit does not fit usize".into()))?;
-    let next_cursor = if single_goal_stream && rows.len() > limit {
+    let next_cursor = if rows.len() > limit {
         rows.truncate(limit);
         rows.last().map(|row| QueryCursor::Goal {
             handle: row.handle,
@@ -137,7 +137,6 @@ fn t_timestamp_sql(t: &'static str) -> SqlText {
 
 /// The columns of a goal row, as [`GoalRowDb`] reads them. `g` is the goal
 /// version and `h` its series head.
-/// `Proxiima.Query.goalTimeSources`.
 fn goal_columns() -> SqlText {
     // `changed_at` comes from this version's `t`. `set_at` comes from the
     // series' first version, the least `t` among its rows.
@@ -164,12 +163,7 @@ fn goal_columns() -> SqlText {
 
 fn goal_page_sql(req: &QueryRequest, filters: &[GoalFilter]) -> SqlText {
     let has_goal_ids = !req.goal_ids.is_empty();
-    let single_goal_stream = matches!(req.entity_kind, Some(EntityKind::Goal));
-    let fetch_limit = if single_goal_stream {
-        u64::from(req.limit) + 1
-    } else {
-        u64::from(req.limit)
-    };
+    let fetch_limit = page_fetch_limit(req);
     let heads_only = matches!(req.supersession, SupersessionStatus::HeadsOnly) && !has_goal_ids;
     if heads_only
         && filters.iter().all(|filter| {

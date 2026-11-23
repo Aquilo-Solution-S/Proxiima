@@ -1737,6 +1737,31 @@ async fn facade_core_recall_returns_cue_packet_and_rejects_empty_cue() {
         .await?;
         let goal_handle = goal["handle"].as_str().expect("goal handle");
 
+        // These Facts are all newer than the touching Perspective and pin the same cue.
+        let engine = built.host().engine();
+        let body = "A newer observation about the cue";
+        let language = proxiima_core::lexical_language::resolve_lexical_language(None, body)?;
+        for n in 0..33 {
+            let note = proxiima_core::AgentNoteV1 {
+                note_id: Uuid::now_v7(),
+                title: format!("Newer pin carrier {n}"),
+                body: body.into(),
+                tags: Vec::new(),
+                idempotency_key: None,
+            };
+            let draft = proxiima_core::verbs::fact_ingest::FactWriteCommand::from_payload(
+                "test/recall",
+                &note,
+            )
+            .with_refs(vec![fact_t])
+            .with_lexical_language(Some(language.clone()));
+            let sidecars = [proxiima_core::SidecarPayload::fact(note)];
+            let authorized = engine
+                .authorize_fact_ingest(&authz, draft, &sidecars)
+                .await?;
+            engine.ingest_authorized_fact(&authorized).await?;
+        }
+
         let packet = call_test_model_tool(
             &tools,
             authz.clone(),

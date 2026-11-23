@@ -119,7 +119,7 @@ async fn recall_unassigned_goals_keeps_space_scope_pages_and_dedupes_subjects() 
 }
 
 #[tokio::test]
-async fn recall_question_keeps_the_selected_owner_scope() {
+async fn recall_question_and_perspective_subjects_respect_the_selected_owner() {
     let split_db = clone_split_core_db("proxiima_recall_question_scope")
         .await
         .expect("PG required for tests");
@@ -177,9 +177,31 @@ async fn recall_question_keeps_the_selected_owner_scope() {
             .collect();
         assert!(handles.contains(&shared_match.as_str()), "{question}");
         assert!(!handles.contains(&personal_match.as_str()), "{question}");
+        let interpret = |owner, fact: String| {
+            call(
+                owner,
+                "core_interpret",
+                serde_json::json!({"claim":"a stance on the cue", "confidence":80, "subjects":[fact]}),
+            )
+        };
+        let shared_stance = handle_of(&interpret(shared, shared_match).await?)?;
+        let personal_stance = handle_of(&interpret(personal, personal_match).await?)?;
+        let subjects = call(
+            personal,
+            "core_recall",
+            serde_json::json!({
+                "subjects": [shared_stance, personal_stance], "kind": "Perspective",
+                "space": shared_space,
+            }),
+        )
+        .await?;
+        let sketches = subjects["sketches"].as_array().ok_or("sketches")?;
+        assert_eq!(sketches.len(), 1, "{subjects}");
+        assert_eq!(sketches[0]["handle"], shared_stance, "{subjects}");
+        assert_eq!(sketches[0]["reason"], "subject", "{subjects}");
         Ok(())
     }
     .await;
     built.shutdown().await;
-    result.expect("recall question respects selected owner scope");
+    result.expect("recall question and Perspective subjects respect selected owner scope");
 }

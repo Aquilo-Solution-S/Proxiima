@@ -14,6 +14,13 @@ mod series_handle;
 mod sidecar_heads;
 mod surroundings;
 
+use proxiima_core::verbs::query::QueryRequest;
+
+fn page_fetch_limit(req: &QueryRequest) -> u64 {
+    // `Proxiima.Query.memoryPageExtraRows`.
+    u64::from(req.limit) + u64::from(req.entity_kind.is_some())
+}
+
 pub(crate) use citations::citations_of_facts_on_connection;
 pub(crate) use citations::facts_citing_object_on_connection;
 pub(crate) use counts::count_memories_on_connection;

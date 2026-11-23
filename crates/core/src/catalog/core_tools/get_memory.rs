@@ -207,6 +207,7 @@ pub(super) fn project_remote_memory(
 /// `facts_citing_object`.
 ///
 /// `Proxiima.Query.spaceLabel`.
+/// The reported space comes from the stored owner, so follow-up writes target that owner regardless of the supplied space.
 pub(super) fn project_memory_snapshot(
     ctx: &ToolCtx,
     snapshot: crate::read_models::MemorySnapshot,

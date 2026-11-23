@@ -2,11 +2,15 @@ pub use super::proof::{OperatorWriteProof, OwnerWritePermit};
 
 pub use crate::edge::PinTargetKind;
 
-/// Newest-first inbound pin page. Kind selects which array; `None` is both.
+/// Newest-first inbound pin page over the requested edge kind and pin target type.
 #[derive(Debug, Clone, Copy)]
 pub struct InboundPinQuery<'a> {
     pub targets: &'a [MemoryId],
     pub kind: Option<EdgeKind>,
+    /// Restrict the pin carriers to this owner within the readable owners.
+    pub owner: Option<OwnerId>,
+    /// Restrict the pin carriers to this Memory kind before applying the limit.
+    pub memory_kind: Option<crate::MemoryKind>,
     pub supersession: SupersessionStatus,
     pub after: Option<MemoryId>,
     pub limit: u32,
@@ -148,8 +152,8 @@ pub trait MemoryReadPort: Send + Sync {
         goal_ids: &[GoalId],
     ) -> Result<Vec<GoalId>, StorageError>;
 
-    /// Owner-scoped GIN page of rows that list any of `query.targets` in
-    /// `origins` and/or `refs`. Newest `t` first; `after` is exclusive.
+    /// Owner-scoped page of rows with matching pins to any of `query.targets`.
+    /// Apply owner and Memory kind filters before the limit. Newest `t` first; `after` is exclusive.
     /// `limit == 0` is a constraint violation.
     async fn load_inbound_pin_nodes(
         &self,
