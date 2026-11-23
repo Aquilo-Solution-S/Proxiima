@@ -102,7 +102,7 @@ See [`Proxiima.Transport`](ledger.md#transport) for listener and MCP defaults.
 | PROXIIMA_EMBED_MODEL | embedding model | enable embeddings | text |  |
 | PROXIIMA_EMBED_DIM | embedding vector width, one the store indexes | non-default model width | integer | `1024` |
 | PROXIIMA_EMBED_MATRYOSHKA | nested-prefix request switch | Matryoshka model | boolean | `false` |
-| PROXIIMA_EMBED_MAX_INPUT_CHARS | embedding input ceiling in characters, at least 1 | provider input tuning | integer | `16384` |
+| PROXIIMA_EMBED_MAX_INPUT_CHARS | embedding input ceiling in characters, at least 4095 | provider input tuning | integer | `16384` |
 | PROXIIMA_EMBED_QUERY_INSTRUCTION | template every search query is embedded in; holds `{query}`, and `\n` is a newline | instruction-tuned model | text |  |
 | OTEL_EXPORTER_OTLP_ENDPOINT | metrics are exported over OTLP to this endpoint; the OpenTelemetry SDK reads it and the other standard `OTEL_EXPORTER_OTLP_*` variables from the process environment | export metrics | URL |  |
 | OTEL_SERVICE_NAME | `service.name` of the exported metrics; unset, `service.name` in `OTEL_RESOURCE_ATTRIBUTES` names the service, else `proxiima-mcp` | name this deployment in its metrics | text |  |

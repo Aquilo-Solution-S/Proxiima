@@ -76,7 +76,7 @@ impl EmbeddingTextPort for PgStorage {
         Ok(result)
     }
 
-    async fn list_facts_missing_embedding(
+    async fn list_memories_missing_embedding(
         &self,
         owner_scope: Option<&proxiima_core::OwnerScope>,
         owner: &OwnerId,
@@ -89,7 +89,7 @@ impl EmbeddingTextPort for PgStorage {
             crate::owner_scope::require_owner_scope(owner_scope)?,
         )
         .await?;
-        let result = verbs::fact_embeddings::list_facts_missing_embedding(
+        let result = verbs::fact_embeddings::list_memories_missing_embedding(
             tx.as_mut(),
             owner,
             space,
@@ -111,6 +111,7 @@ impl PgStorage {
         entity: proxiima_core::EmbeddableEntityRef,
         vectors: &[proxiima_core::SpaceVector],
     ) -> Result<EmbeddingWriteOutcome, StorageError> {
+        // `Proxiima.Embeddings.vectorStorageParts`.
         match &self.vectors {
             crate::vector_index::StoreVectors::Local => {
                 verbs::fact_embeddings::insert_embedding(tx, owner, entity, vectors).await
@@ -141,6 +142,7 @@ impl EmbeddingWritePort for PgStorage {
                 write.vectors,
             )?);
         }
+        // `Proxiima.Embeddings.publishChunks` and `Proxiima.Embeddings.hostPublication`.
         let mut tx = self.platform_transaction().await?;
         let mut outcomes = Vec::with_capacity(writes.len());
         for (write, space) in writes.iter().zip(spaces) {

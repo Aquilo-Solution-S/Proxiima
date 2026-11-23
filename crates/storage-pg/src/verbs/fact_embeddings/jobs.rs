@@ -11,7 +11,7 @@ use crate::pg_enums::PgMemoryKind;
 use super::ensure_nonnegative_limit;
 use crate::sidecars::int_to_u64;
 
-/// Claim pending jobs across every embedding space, ordered by `job_id`.
+/// `Proxiima.Embeddings.claimEligible`. Claims span spaces in `job_id` order.
 /// The UPDATE returns rows in plan order, so the answer is ordered by an
 /// outer `SELECT`: a drain that groups the claims works through the Owners in
 /// queue order whatever plan the UPDATE ran under.
@@ -72,8 +72,7 @@ pub fn claim_embedding_jobs_sql_for_tests() -> &'static str {
     CLAIM_EMBEDDING_JOBS_SQL
 }
 
-/// Return `processing` jobs claimed before the window to `pending`. Rides
-/// `embedding_jobs_processing_idx`, which holds the jobs in flight alone.
+/// `Proxiima.Embeddings.settleClaim`. Rides the partial `embedding_jobs_processing_idx`.
 const RECLAIM_STALE_EMBEDDING_JOBS_SQL: &str = "UPDATE proxiima_core.embedding_jobs
             SET status = 'pending',
                 claimed_at = NULL,
@@ -119,15 +118,15 @@ impl TryFrom<EmbeddingJobClaimRow> for EmbeddingJobClaim {
     }
 }
 
-/// Owner-scoped list of Facts with rendered text and no embedding row
-/// in `space`.
+/// Owner-scoped Memory head IDs with missing coverage in `space`.
+/// `Proxiima.Embeddings.candidateMetadata`.
 ///
 /// # Errors
 ///
 /// Returns `ConstraintViolation` when `limit` is too large for
 /// Postgres `bigint`, otherwise maps SQL failures through the shared
 /// mapper.
-pub async fn list_facts_missing_embedding<'e>(
+pub async fn list_memories_missing_embedding<'e>(
     pool: impl PgExecutor<'e>,
     owner: &OwnerId,
     space: &EmbeddingSpace,
@@ -606,6 +605,7 @@ async fn enqueue_missing_embedding_jobs_on_connection(
 /// # Errors
 ///
 /// Maps SQL failures through the shared mapper.
+/// `Proxiima.Embeddings.backlogGroup`.
 pub async fn count_embedding_job_status<'e>(
     pool: impl PgExecutor<'e>,
     owner: &OwnerId,
@@ -643,6 +643,7 @@ pub async fn count_embedding_job_status<'e>(
 /// [`proxiima_core::MAX_EMBEDDING_DIAGNOSTIC_UNITS`] memories. Storage
 /// errors from the read, or a job row whose status or width is not one
 /// this binary knows.
+/// `Proxiima.Embeddings.diagnosticClaimAge`.
 pub(crate) async fn embedding_job_diagnostics<'e>(
     pool: impl PgExecutor<'e>,
     owner: &OwnerId,
@@ -709,6 +710,7 @@ impl EmbeddingJobDiagnosticRow {
     }
 }
 
+/// `Proxiima.Embeddings.diagnosticClaimAge`.
 pub(crate) fn embedding_job_state(
     status: &EmbeddingJobState,
     claim_age_seconds: Option<i64>,
@@ -777,6 +779,29 @@ mod diagnostic_state_tests {
     }
 
     #[test]
+    fn claim_age_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../core/tests/ledger_vectors.json"))
+                .expect("parse ledger vectors");
+        for row in vectors["Proxiima.Embeddings.diagnosticClaimAge"]
+            .as_array()
+            .expect("diagnostic vectors")
+        {
+            let label = match row["in"][0].as_str().expect("job state") {
+                "failedPermanent" => "failed_permanent",
+                label => label,
+            };
+            let status: EmbeddingJobState = label.parse().expect("stored job status");
+            let state = embedding_job_state(&status, Some(9), None).expect("claim age");
+            assert_eq!(
+                matches!(state, EmbeddingJobState::Processing { claim_age }
+                    if claim_age == time::Duration::seconds(9)),
+                row["out"].as_bool().expect("claim age presence")
+            );
+        }
+    }
+
+    #[test]
     fn pending_and_failed_carry_no_claim_age() {
         assert_eq!(
             embedding_job_state(&EmbeddingJobState::Pending, Some(9), None).expect("pending"),
@@ -816,6 +841,7 @@ mod diagnostic_state_tests {
 /// # Errors
 ///
 /// Maps SQL failures through the shared mapper.
+/// `Proxiima.Embeddings.admissionOrder`.
 pub(crate) async fn enqueue_embedding_jobs_in_tx<'s>(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     owner_id: uuid::Uuid,

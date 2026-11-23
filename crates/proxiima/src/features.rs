@@ -120,7 +120,7 @@ impl FeatureControl {
         self.feature
     }
 
-    /// Stop the feature from claiming, and wait until it holds nothing.
+    /// Stop the feature from claiming and wait for its current pass to return.
     ///
     /// Closes the gate, then resolves once the worker task itself has parked:
     /// no claim starts after it returns, and the embedding worker's current
@@ -132,8 +132,9 @@ impl FeatureControl {
     /// still enqueue embedding jobs and outbox records, and they wait for
     /// [`Self::resume`]. A release that failed leaves its lease to expire
     /// (the outbox drain's 30 s lease; the embedding policy's stale-claim
-    /// timeout), so quiescent does not mean no row is `claimed`. A host that
-    /// calls `Engine::drain_embedding_jobs` itself is not gated. Dropping the
+    /// timeout, see `Proxiima.Embeddings.claimRecovery`), so a row may remain
+    /// claimed. A host that calls `Engine::drain_embedding_jobs` itself is
+    /// outside this gate. Dropping the
     /// future does not reopen the gate.
     ///
     /// # Errors
@@ -740,7 +741,9 @@ impl WorkerPass for PublicationRetention {
 /// The longest the embedding worker sleeps between idle drains when no
 /// write commits in this process, unless the configured worker interval is
 /// longer: how late it finds jobs enqueued by another process.
-const EMBED_IDLE_POLL_MAX: Duration = Duration::from_mins(1);
+const EMBED_IDLE_POLL_MAX: Duration = Duration::from_secs(proxiima_core::ledger!(
+    Proxiima.Embeddings.idleBackoffSeconds
+));
 
 /// Startup reconcile, then drain until cancellation. Started only when the
 /// engine has an embedding router.
@@ -754,12 +757,7 @@ const EMBED_IDLE_POLL_MAX: Duration = Duration::from_mins(1);
 /// waits for it.
 async fn embedding_worker(engine: Arc<Engine>, cancel: CancellationToken, gate: GateWorker) {
     let policy = engine.embedding_runtime_policy();
-    // Boot-time catch-up, not a recurring clock: memories written while
-    // no embedding client was configured never got a job (and exhausted
-    // `failed` jobs stay dead), so one reconcile pass before the first
-    // drain keeps a restart from leaving them silently unsearchable.
-    // Recurring scans and reports stay outside the process
-    // (`proxiima-mcp maintain-embeddings`); owed work drains here.
+    // `Proxiima.Embeddings.workerStart`. Recurring scans run through maintain-embeddings.
     match engine
         .reconcile_embeddings(
             proxiima_core::EmbeddingReconcileScope::MissingOnly,

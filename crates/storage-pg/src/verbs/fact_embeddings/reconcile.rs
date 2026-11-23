@@ -10,16 +10,15 @@ pub use proxiima_core::{
     EmbeddingReconcileOptions, EmbeddingReconcileOutcome, EmbeddingReconcileScope,
 };
 
-/// Memories one reconcile step reads: the page the statement is bounded to.
-const RECONCILE_PAGE: i64 = 2_000;
+const RECONCILE_PAGE: i64 = proxiima_core::ledger!(Proxiima.Embeddings.reconcilePageSize);
 
+/// `Proxiima.Embeddings.candidateMetadata` and `Proxiima.Embeddings.reconcileJob`.
 /// One page of the reconcile scan: the next `$9` live memories after `$8` in
 /// key order, of the owners and age asked for. Of those, the heads that
 /// lack coverage or a job in the space are the candidates, and the first `$2`
 /// of them are enqueued. Each page row probes its head and its embedding head
 /// by key. Returns what was enqueued, how many memories the page
-/// held and the last of them. The page is read by key, so a step reads a page
-/// of the table however the filters fall.
+/// held and the last of them. Owner and age filters run before the page limit.
 const RECONCILE_EMBEDDINGS_SQL: &str = "
 WITH page AS MATERIALIZED (
      SELECT m.t, m.handle, m.owner_id
@@ -108,11 +107,8 @@ pub fn reconcile_embeddings_sql_for_tests() -> &'static str {
 
 /// Global reconciliation for embeddable memories.
 ///
-/// Scans Facts plus derived memories with stored text — every Owner's, or
-/// only `options.owners` when the engine names the Owners routed to
-/// `options.space` — skips rows by
-/// scope-specific embedding coverage and target-space durable jobs, and
-/// enqueues via `proxiima_core.embedding_jobs`. A row that already holds a
+/// Scans metadata-eligible live Memory heads for the selected Owners and
+/// embedding space. The drain resolves text. A row that already holds a
 /// `failed` job (retryable cause, per `fail_embedding_job`) is requeued —
 /// status back to `pending`, `last_error` cleared — so reconcile is the
 /// operator/startup reset that lifts a Fact out of the retry dead-end.
@@ -164,8 +160,7 @@ pub(crate) async fn reconcile_embeddings_with_platform(
     )
     .await?;
 
-    // One page per transaction: no statement reads more than a page of heads,
-    // however many memories the store holds.
+    // One page per transaction bounds the result cardinality and downstream head probes.
     let mut after = None;
     loop {
         let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;

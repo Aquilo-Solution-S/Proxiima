@@ -118,6 +118,7 @@ impl Engine {
     /// `owner`'s route for a write: a route the host refuses refuses the
     /// write. The host's message can name its own configuration, so it
     /// stays in the log.
+    /// `Proxiima.Embeddings.routeFailure`.
     pub(in crate::engine) async fn write_route(
         &self,
         owner: &OwnerId,
@@ -135,6 +136,7 @@ impl Engine {
     /// `owner`'s route for a search: a route the host refuses reads as
     /// [`EmbeddingRoute::none`], so the search runs without a semantic arm
     /// instead of failing.
+    /// `Proxiima.Embeddings.routeFailure`.
     pub async fn search_route(&self, owner: &OwnerId) -> EmbeddingRoute {
         self.embedding_route(owner).await.unwrap_or_else(|err| {
             tracing::warn!(
@@ -152,9 +154,9 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns storage errors from text load/upsert, `Internal` for
-    /// embedding client failures, and `ConstraintViolation` when the
-    /// client returns a vector whose length differs from `dim()`.
+    /// Returns storage errors from text load/upsert and `Internal` for
+    /// client failures, including the managed width fault in
+    /// `Proxiima.Embeddings.validateVector`.
     /// A Fact whose schema resolves to no embed unit is left alone:
     /// this is a no-op for it, not a forced vector.
     pub async fn ensure_fact_embedding(
@@ -290,10 +292,9 @@ impl Engine {
     /// # Errors
     ///
     /// Returns storage errors from claiming or final job-state writes. A
-    /// storage error after a batch is claimed first returns that batch's
-    /// unsettled claims to `pending` (best effort; the stale-claim timeout
-    /// is the backstop), so a call that returns leaves none of its claims
-    /// `processing`.
+    /// storage error after a batch is claimed triggers best-effort release
+    /// of its outstanding claims. A failed release leaves them for lease expiry.
+    /// See `Proxiima.Embeddings.claimRecovery`.
     /// Completed jobs and terminal input refusals count as processed;
     /// released jobs do not. Active observed configuration faults are
     /// returned even when no job completed.
@@ -385,9 +386,7 @@ impl Engine {
         Ok(())
     }
 
-    /// After a storage error, return the batch's claims that are still
-    /// `processing` to `pending`, so a caller that waits for the drain call
-    /// to return (a quiesce) never outlives a claim.
+    /// `Proxiima.Embeddings.claimRecovery`.
     ///
     /// One fenced release per claim: a claim this batch already completed or
     /// failed answers `Conflict` and stays as it is. A release that fails for
@@ -460,6 +459,7 @@ impl Engine {
     }
 
     /// Embed one Owner's claims through that Owner's route, space by space.
+    /// `Proxiima.Embeddings.routeFailure`.
     async fn drain_owner_batch(
         &self,
         owner: OwnerId,
@@ -540,8 +540,8 @@ impl Engine {
             .await
     }
 
-    /// Only a typed input refusal isolates a batch. Other failures release
-    /// unsettled claims; shared client control decides when they may retry.
+    /// `Proxiima.Embeddings.drainAction`. A one-item batch can reuse its
+    /// refusal without submitting the full input again.
     async fn embed_claim_batch(
         &self,
         client: &BoundEmbeddingClient,
@@ -702,8 +702,8 @@ impl Engine {
     }
 
     /// Host-invoked reconciliation: enqueue durable embedding jobs for
-    /// every embeddable memory in `scope` that lacks coverage in a space its
-    /// Owner's route names. Complements [`Self::drain_embedding_jobs`]:
+    /// metadata-eligible heads in `scope` for a space their Owner's route names.
+    /// The drain resolves their text. Complements [`Self::drain_embedding_jobs`]:
     /// drain heals the queue, reconcile heals the *absence* of queue entries
     /// (memories written while an Owner had no route, route changes,
     /// `failed` jobs whose retries are exhausted). Idempotent; like drain,
@@ -718,18 +718,16 @@ impl Engine {
     ///
     /// Returns storage errors from the owner scan and the
     /// reconciliation scan/enqueue. `limit: None` uses
-    /// [`crate::EMBEDDING_RECONCILE_DEFAULT_LIMIT`]; it bounds the memories
-    /// that need a job and are enqueued, across all Owners. The walk that
-    /// finds them reads the memories in key order, a page per storage step,
-    /// and ends when the limit is met or the memories end: a bound on
-    /// examined memories would leave everything past it unreconciled, since
-    /// no cursor survives the call.
+    /// [`crate::EMBEDDING_RECONCILE_DEFAULT_LIMIT`]; it bounds the selected
+    /// enqueue candidates across all Owners. The keyset walk stops at that
+    /// budget or at exhaustion. No cursor survives the call.
+    /// `Proxiima.Embeddings.routeFailure`.
     pub async fn reconcile_embeddings(
         &self,
         scope: crate::EmbeddingReconcileScope,
         limit: Option<i64>,
     ) -> Result<crate::EmbeddingReconcileOutcome, StorageError> {
-        const OWNER_PAGE: i64 = 1_000;
+        const OWNER_PAGE: i64 = crate::ledger!(Proxiima.Embeddings.reconcileOwnerPageSize);
         let mut total = crate::EmbeddingReconcileOutcome::default();
         if self.embedding_router.is_none() {
             return Ok(total);
@@ -862,6 +860,7 @@ impl Engine {
     /// read that as "no spaces" and delete everything — or when the host
     /// cannot route `owner`; neither deletes anything. Storage errors from
     /// the purge, which leave earlier batches committed.
+    /// `Proxiima.Embeddings.routeFailure`.
     pub async fn purge_embedding_spaces(
         &self,
         owner: &OwnerId,

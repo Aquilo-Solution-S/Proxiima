@@ -744,9 +744,9 @@ mod pg_tests {
         result
     }
 
-    /// A reconcile step reads a page of heads, not the store (#491): with
-    /// 20,000 uncovered heads, the statement that starts after the 10,000th
-    /// reads about a page of `memory` rows and scans none of the table.
+    /// On a dense range of uncovered heads, reconcile seeks to the cursor
+    /// and keeps the memory-table work proportional to one page.
+    /// See `Proxiima.Embeddings.reconcilePageSize`.
     #[tokio::test]
     async fn a_reconcile_step_reads_one_page_of_heads() -> Result<(), Box<dyn std::error::Error>> {
         let (pg, db_name) = fresh_pg("proxiima_spg_embed").await;
@@ -779,7 +779,7 @@ mod pg_tests {
                 .bind(1024_i16)
                 .bind(None::<Vec<Uuid>>)
                 .bind(cursor)
-                .bind(2_000_i64)
+                .bind(proxiima_core::ledger!(Proxiima.Embeddings.reconcilePageSize) as i64)
                 .fetch_one(&mut *tx)
                 .await?;
             tx.rollback().await?;
@@ -2090,6 +2090,13 @@ mod pg_tests {
             assert!(
                 outcome.embedding_deferred,
                 "an admitted embeddable text reports its queued work"
+            );
+            let missing =
+                super::super::list_memories_missing_embedding(pool, &owner, &STUB_SPACE, 16, &[])
+                    .await?;
+            assert!(
+                missing.contains(&outcome.memory_id),
+                "derived heads are candidates"
             );
             assert_eq!(
                 count_jobs(pool, outcome.memory_id.into_inner()).await?,

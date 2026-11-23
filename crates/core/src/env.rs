@@ -191,13 +191,13 @@ impl SettingKind {
 #[macro_export]
 macro_rules! settings {
     (@default) => { ::core::option::Option::None };
-    (@default $default:literal) => { ::core::option::Option::Some($default) };
+    (@default $default:expr) => { ::core::option::Option::Some($default) };
     ($(
         $(#[$meta:meta])*
         $name:ident: $kind:ident {
             purpose: $purpose:expr,
             when_needed: $when_needed:literal,
-            $(default: $default:literal,)?
+            $(default: $default:expr,)?
         }
     )+) => {
         $(
@@ -219,29 +219,29 @@ macro_rules! settings {
 
 settings! {
     PROXIIMA_EMBED_REQUEST_TIMEOUT_SECONDS: Seconds {
-        purpose: "provider request timeout, 1 to 3600 seconds",
+        purpose: concat!("provider request timeout, 1 to ", crate::ledger!(Proxiima.Embeddings.requestSecondsMax), " seconds"),
         when_needed: "embedding worker tuning",
-        default: "120",
+        default: concat!(crate::ledger!(Proxiima.Embeddings.requestSeconds)),
     }
     PROXIIMA_EMBED_BATCH_SIZE: Integer {
-        purpose: "texts per provider request, 1 to 1024",
+        purpose: concat!("texts per provider request, 1 to ", crate::ledger!(Proxiima.Embeddings.batchSizeMax)),
         when_needed: "embedding worker tuning",
-        default: "32",
+        default: concat!(crate::ledger!(Proxiima.Embeddings.batchSize)),
     }
     PROXIIMA_EMBED_DRAIN_CONCURRENCY: Integer {
-        purpose: "batches one drain pass sends at once, 1 to 64",
+        purpose: concat!("batches one drain pass sends at once, 1 to ", crate::ledger!(Proxiima.Embeddings.drainConcurrencyMax)),
         when_needed: "indexing throughput the provider can take",
-        default: "1",
+        default: concat!(crate::ledger!(Proxiima.Embeddings.drainConcurrency)),
     }
     PROXIIMA_EMBED_WORKER_INTERVAL_SECONDS: Seconds {
-        purpose: "first idle wait of the embedding worker, 1 to 3600 seconds; doubles while drains find nothing, up to 60 s or this value if longer; a write committed in the process wakes it at once",
+        purpose: concat!("first idle wait of the embedding worker, 1 to ", crate::ledger!(Proxiima.Embeddings.idleSecondsMax), " seconds; doubles while drains find nothing, up to ", crate::ledger!(Proxiima.Embeddings.idleBackoffSeconds), " s or this value if longer; a write committed in the process wakes it at once"),
         when_needed: "embedding worker tuning",
-        default: "5",
+        default: concat!(crate::ledger!(Proxiima.Embeddings.idleSeconds)),
     }
     PROXIIMA_EMBED_STALE_CLAIM_TIMEOUT_SECONDS: Seconds {
-        purpose: "stale claim timeout, 1 to 86400 seconds and longer than the request timeout",
+        purpose: concat!("stale claim timeout, 1 to ", crate::ledger!(Proxiima.Embeddings.staleClaimSecondsMax), " seconds and longer than the request timeout"),
         when_needed: "embedding worker recovery",
-        default: "900",
+        default: concat!(crate::ledger!(Proxiima.Embeddings.staleClaimSeconds)),
     }
     PROXIIMA_PLAINTEXT_HOSTS: List {
         purpose: "exact host names, besides loopback, that outbound endpoints may reach over plaintext HTTP",

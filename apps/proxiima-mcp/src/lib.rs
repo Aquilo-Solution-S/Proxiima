@@ -42,7 +42,8 @@ use settings::{
 };
 
 const DEFAULT_EMBED_MAX_INPUT_CHARS: NonZeroU32 =
-    NonZeroU32::new(16_384).expect("embedding input default is positive");
+    NonZeroU32::new(proxiima_core::ledger!(Proxiima.Embeddings.inputCapDefault))
+        .expect("embedding input default is positive");
 
 /// Tool/action scope keys advertised by the `memory` profile. Flat entries
 /// reference the owning tool's `Tool::NAME`; grouped tools contribute
@@ -743,8 +744,11 @@ fn query_instruction_from_env(
 ) -> Result<Option<QueryInstruction>, CliError> {
     key.read_source(lookup)
         .map(|raw| {
-            QueryInstruction::new(raw.replace("\\n", "\n"))
-                .map_err(|err| CliError::Runtime(ProxiimaError::Config(format!("{key}: {err}"))))
+            QueryInstruction::new(raw.replace(
+                proxiima_core::ledger!(Proxiima.Embeddings.queryNewlineEscape),
+                "\n",
+            ))
+            .map_err(|err| CliError::Runtime(ProxiimaError::Config(format!("{key}: {err}"))))
         })
         .transpose()
 }
@@ -953,6 +957,7 @@ fn embedding_client_from_env(
         .read_source(lookup)
         .is_some();
 
+    // `Proxiima.Embeddings.providerConfig`.
     if base_url.is_none()
         && model.is_none()
         && api_key.is_none()
@@ -1014,7 +1019,9 @@ fn parse_positive_u32_env(
 
 fn parse_bool_env(lookup: &(impl EnvLookup + ?Sized), key: &Setting) -> Result<bool, CliError> {
     match key.read_source(lookup) {
-        None => Ok(false),
+        None => Ok(proxiima_core::ledger!(
+            Proxiima.Embeddings.defaultMatryoshka
+        )),
         Some(raw) => proxiima_core::parse_bool_word(&raw).ok_or_else(|| {
             CliError::Runtime(ProxiimaError::Config(format!(
                 "{key} must be a boolean, got {raw:?}"
@@ -1032,7 +1039,12 @@ fn embedding_dim_from_env(
     lookup: &(impl EnvLookup + ?Sized),
 ) -> Result<proxiima_core::embedding::EmbeddingDim, CliError> {
     let Some(raw) = PROXIIMA_EMBED_DIM.read_source(lookup) else {
-        return Ok(proxiima_core::embedding::EmbeddingDim::D1024);
+        const DEFAULT_WIDTH: proxiima_core::embedding::EmbeddingDim =
+            proxiima_core::embedding::EmbeddingDim::from_width(proxiima_core::ledger!(
+                Proxiima.Embeddings.defaultWidth
+            ))
+            .expect("ledger default width is indexed");
+        return Ok(DEFAULT_WIDTH);
     };
     let width = raw.parse::<usize>().map_err(|_| {
         CliError::Runtime(ProxiimaError::Config(format!(

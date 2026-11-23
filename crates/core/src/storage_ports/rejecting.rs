@@ -387,7 +387,7 @@ impl EmbeddingTextPort for RejectingStorage {
         Ok(vec![None; items.len()])
     }
 
-    async fn list_facts_missing_embedding(
+    async fn list_memories_missing_embedding(
         &self,
         _scope: Option<&crate::OwnerScope>,
         _owner: &OwnerId,

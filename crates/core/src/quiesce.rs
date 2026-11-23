@@ -5,9 +5,9 @@
 //! and calls [`GateWorker::checkpoint`] before every claim. The host holds the
 //! [`QuiesceGate`] half. [`QuiesceGate::quiesce`] closes the gate and resolves
 //! only once the worker task itself has parked at a checkpoint, so no claim
-//! starts after it returns and every claim the worker held when the gate
-//! closed has been settled. The gate says nothing about queue depth: rows
-//! enqueued while the worker is parked stay queued.
+//! starts after it returns. Each drain owns its claim settlement, including
+//! lease recovery after storage failure (`Proxiima.Embeddings.claimRecovery`).
+//! Rows enqueued while the worker is parked stay queued.
 //!
 //! [`QuiesceGate::new`] is the only constructor. Dropping the [`GateWorker`]
 //! (the task ended, for any reason) is what makes the gate

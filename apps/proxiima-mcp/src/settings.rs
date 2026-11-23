@@ -30,17 +30,17 @@ proxiima::settings! {
     PROXIIMA_EMBED_DIM: Integer {
         purpose: "embedding vector width, one the store indexes",
         when_needed: "non-default model width",
-        default: "1024",
+        default: concat!(proxiima_core::ledger!(Proxiima.Embeddings.defaultWidth)),
     }
     PROXIIMA_EMBED_MATRYOSHKA: Boolean {
         purpose: "nested-prefix request switch",
         when_needed: "Matryoshka model",
-        default: "false",
+        default: concat!(proxiima_core::ledger!(Proxiima.Embeddings.defaultMatryoshka)),
     }
     PROXIIMA_EMBED_MAX_INPUT_CHARS: Integer {
-        purpose: "embedding input ceiling in characters, at least 1",
+        purpose: concat!("embedding input ceiling in characters, at least ", proxiima_core::ledger!(Proxiima.Embeddings.inputCapMin)),
         when_needed: "provider input tuning",
-        default: "16384",
+        default: concat!(proxiima_core::ledger!(Proxiima.Embeddings.inputCapDefault)),
     }
     PROXIIMA_EMBED_QUERY_INSTRUCTION: Text {
         purpose: "template every search query is embedded in; holds `{query}`, and `\\n` is a newline",

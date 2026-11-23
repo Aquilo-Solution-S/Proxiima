@@ -786,8 +786,8 @@ impl<'a> UnitOfWork<'a> {
     }
 
     /// Prepare a batch before opening the write transaction, then append every row.
-    /// Every admitted row queues embedding work atomically without a provider
-    /// call. Drop without commit rolls back the batch and its jobs.
+    /// See `Proxiima.Embeddings.admissionOrder`. Drop without commit rolls
+    /// back the batch and its jobs.
     /// Use sequential `derive_memory` calls when one result is an input to the next.
     ///
     /// # Errors

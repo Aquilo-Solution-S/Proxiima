@@ -21,11 +21,9 @@ pub trait EmbeddingTextPort: Send + Sync {
     /// to embed.
     ///
     /// `non_embeddable_schemas` are excluded exactly as in
-    /// [`Self::list_facts_missing_embedding`]: a row whose schema declared
-    /// [`crate::spiice::EmbeddingRecipe::Never`] has no text to embed,
-    /// however it is reached. The exclusion lives here, not only at the
-    /// enqueue sites, because a caller holding a `MemoryId` can ask to
-    /// embed one row directly and never passes through a job queue.
+    /// [`Self::list_memories_missing_embedding`]: a row whose schema declared
+    /// [`crate::spiice::EmbeddingRecipe::Never`] has no text to embed.
+    /// Direct requests by `MemoryId` also use the exclusion.
     /// Empty slice = exclude nothing.
     async fn load_embedding_text(
         &self,
@@ -48,14 +46,12 @@ pub trait EmbeddingTextPort: Send + Sync {
         non_embeddable_schemas: &[String],
     ) -> Result<Vec<Option<String>>, StorageError>;
 
-    /// Facts with text but no vector in `space`.
+    /// Live Memory head IDs across layers with no embedding head in `space`.
+    /// Eligibility here uses schema metadata. The drain resolves the text.
     ///
-    /// `non_embeddable_schemas` are excluded — they are not missing a
-    /// vector, they declined one ([`crate::spiice::EmbeddingRecipe::Never`]).
-    /// Without the exclusion this reports a backlog that no drain can
-    /// ever clear, which is the same shape of lie as a queue that never
-    /// empties. Empty slice = exclude nothing.
-    async fn list_facts_missing_embedding(
+    /// `non_embeddable_schemas` excludes ids that declined embeddings.
+    /// An empty slice excludes nothing.
+    async fn list_memories_missing_embedding(
         &self,
         scope: Option<&OwnerScope>,
         owner: &OwnerId,
@@ -316,7 +312,8 @@ pub struct EmbeddingJobStatusCounts {
 }
 
 /// Most memories one [`EmbeddingJobPort::embedding_job_diagnostics`] call names.
-pub const MAX_EMBEDDING_DIAGNOSTIC_UNITS: usize = 256;
+pub const MAX_EMBEDDING_DIAGNOSTIC_UNITS: usize =
+    crate::ledger!(Proxiima.Embeddings.diagnosticsMax);
 
 /// Refuse a diagnostics call that names more memories than
 /// [`MAX_EMBEDDING_DIAGNOSTIC_UNITS`].
@@ -460,7 +457,8 @@ pub enum EmbeddingReconcileScope {
 /// Process startup uses this. `maintain-embeddings` without `--limit`
 /// is the operator full pass (`i64::MAX` at that CLI boundary only).
 /// Storage refuses `limit: None`.
-pub const EMBEDDING_RECONCILE_DEFAULT_LIMIT: i64 = 50_000;
+pub const EMBEDDING_RECONCILE_DEFAULT_LIMIT: i64 =
+    crate::ledger!(Proxiima.Embeddings.reconcileDefaultLimit);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmbeddingReconcileOptions<'a> {
@@ -471,8 +469,7 @@ pub struct EmbeddingReconcileOptions<'a> {
     pub scope: EmbeddingReconcileScope,
     /// Required at the storage boundary. `None` is a constraint error.
     /// Engine `None` becomes [`EMBEDDING_RECONCILE_DEFAULT_LIMIT`]. It bounds
-    /// the memories enqueued (`scanned` in the outcome), not the memories
-    /// read to find them.
+    /// selected candidates (`scanned` in the outcome).
     pub limit: Option<i64>,
     /// Schema ids that declined a vector
     /// ([`crate::spiice::EmbeddingRecipe::Never`]), excluded from the scan.
@@ -557,10 +554,9 @@ pub trait EmbeddingMaintenancePort: Send + Sync {
         proof: OperatorMaintenanceProof,
     ) -> Result<EmbeddingOrphanSweepOutcome, StorageError>;
 
-    /// Global enqueue-only reconciliation: durable embedding jobs for every
-    /// embeddable memory the scope selects that lacks coverage in
-    /// `options.space`. Idempotent; requeues `failed` jobs, leaves
-    /// `pending`/`processing` untouched.
+    /// Enqueue durable jobs for metadata-eligible Memory heads in the chosen
+    /// scope and space. The drain resolves text. See
+    /// `Proxiima.Embeddings.candidateMetadata` and `Proxiima.Embeddings.reconcileJob`.
     async fn reconcile_embeddings(
         &self,
         options: EmbeddingReconcileOptions<'_>,

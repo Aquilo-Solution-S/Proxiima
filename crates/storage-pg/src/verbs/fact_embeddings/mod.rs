@@ -22,7 +22,7 @@ pub use jobs::{claim_embedding_jobs_sql_for_tests, reclaim_stale_embedding_jobs_
 pub(crate) use jobs::{
     claim_pending_embedding_jobs, complete_embedding_job, count_embedding_job_status,
     embedding_job_diagnostics, enqueue_missing_embedding_jobs, fail_embedding_job,
-    fail_embedding_job_permanently, list_facts_missing_embedding, reclaim_stale_embedding_jobs,
+    fail_embedding_job_permanently, list_memories_missing_embedding, reclaim_stale_embedding_jobs,
     release_embedding_jobs_on_connection, renew_embedding_jobs,
 };
 pub(crate) use ops::{
