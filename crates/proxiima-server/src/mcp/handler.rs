@@ -253,6 +253,7 @@ impl ServerHandler for DynamicHandler {
         if context.peer.peer_info().is_none() {
             context.peer.set_peer_info(request);
         }
+        // `Proxiima.ToolSurface.listChangeListeners`.
         if let (Some(notifier), Some(auth)) =
             (self.server.tool_list_notifier(), auth_context(&context))
         {
@@ -1093,6 +1094,7 @@ impl<'a> Caller<'a> {
 /// request behavior. This keeps a mixed spiice dispatcher useful to a viewer
 /// without advertising its writes.
 pub(crate) fn tool_allowed_for_auth(caller: Caller<'_>, descriptor: &ToolDescriptor) -> bool {
+    // `Proxiima.ToolSurface.listingChecks`.
     let scope = caller.auth.map(|ctx| ctx.authz.capabilities());
     if !scope_allows(scope, descriptor) {
         return false;
@@ -1177,7 +1179,7 @@ pub(crate) fn annotations_for_auth(
         .effect_over(|action| {
             caller.auth.is_none() || action_allowed_for_auth(caller, descriptor, action)
         })
-        .map(ToolAnnotations::registered)
+        .map(|effect| descriptor.annotations_for_effect(effect))
 }
 
 /// Whether a request that carries no bound auth context may see or call

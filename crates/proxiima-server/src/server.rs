@@ -39,7 +39,8 @@ pub struct ToolHost {
 }
 
 /// Longest host tool name served.
-pub const MAX_HOST_TOOL_NAME_CHARS: usize = 128;
+pub const MAX_HOST_TOOL_NAME_CHARS: usize =
+    proxiima_core::ledger!(Proxiima.ToolSurface.maxHostToolNameChars);
 
 impl std::fmt::Debug for ToolHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -104,6 +105,7 @@ impl ToolHost {
     /// The source's [`ToolError`], unchanged; no host source means an
     /// empty catalog, a failing one never does.
     pub async fn host_tools_for(&self, auth: &AuthContext) -> Result<Vec<HostTool>, ToolError> {
+        // `Proxiima.ToolSurface.mcpCatalogSources`.
         let Some(source) = &self.host_tools else {
             return Ok(Vec::new());
         };
@@ -404,8 +406,7 @@ impl ToolHost {
         // recorded on the context the behaviors receive.
         let observer = ctx.clone();
         let reply = async {
-            // Validate once for every transport before a behavior can log
-            // arguments or a tool can pass them to storage.
+            // `Proxiima.ToolSurface.callChecks`.
             reject_nul_in_args(&args)?;
             let reply = self
                 .dispatch_through_behaviors(name.clone(), args, ctx, terminal)
@@ -526,6 +527,7 @@ fn checked_reply(
     declares_output_schema: bool,
     reply: ToolReply,
 ) -> Result<ToolReply, ToolError> {
+    // `Proxiima.ToolSurface.replyWithOutputSchema`.
     match &reply {
         ToolReply::Structured(output) if !output.is_object() => {
             tracing::error!(tool = %tool, "tool output after request behaviors must be a JSON object");

@@ -1231,6 +1231,32 @@ async fn replies_are_checked_where_they_leave_the_behaviors() {
     assert_eq!(reply, failure);
 }
 
+#[test]
+fn replies_with_an_output_schema_match_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json")).unwrap();
+    for row in vectors["Proxiima.ToolSurface.replyWithOutputSchema"]
+        .as_array()
+        .unwrap()
+    {
+        let reply = match row["in"][0].as_str().unwrap() {
+            "structured" => ToolReply::Structured(serde_json::json!({})),
+            "content" => ToolReply::Content(Vec::new()),
+            "failure" => ToolReply::Failure(Vec::new()),
+            "structuredFailure" => ToolReply::StructuredFailure {
+                structured: serde_json::Map::new(),
+                content: Vec::new(),
+            },
+            name => panic!("unknown reply vector input {name}"),
+        };
+        assert_eq!(
+            super::checked_reply("fixture", true, reply).is_ok(),
+            row["out"].as_bool().unwrap(),
+            "{row}"
+        );
+    }
+}
+
 /// A structured failure follows the content rule: delivered from a tool
 /// without an output schema, refused from one that declared it.
 #[tokio::test]

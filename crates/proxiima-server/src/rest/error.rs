@@ -16,12 +16,11 @@
 //!   Adding an error variant is therefore a compile error until someone
 //!   chooses its status.
 
-use axum::http::StatusCode;
 use proxiima_core::ToolError;
 use proxiima_core::error::ErrorCode;
 use proxiima_core::{RuleClass, StorageError};
 
-use crate::problem::Problem;
+use crate::problem::{Problem, ProblemStatus as Status};
 use crate::server::ToolInvocationError;
 
 /// Map one dispatch failure onto its problem document.
@@ -35,14 +34,14 @@ use crate::server::ToolInvocationError;
 pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
     match err {
         ToolInvocationError::NotAuthorized(name) => Problem::new(
-            StatusCode::FORBIDDEN,
+            Status::FORBIDDEN,
             "not-authorized",
             "Not authorized",
             ToolError::NotAuthorized(name.clone()).client_message(),
             instance,
         ),
         ToolInvocationError::ToolNotFound(name) => Problem::new(
-            StatusCode::NOT_FOUND,
+            Status::NOT_FOUND,
             "tool-not-found",
             "Tool not found",
             format!("tool {name} not found"),
@@ -54,36 +53,28 @@ pub fn problem_for(err: &ToolInvocationError, instance: &str) -> Problem {
 
 fn tool_problem(err: &ToolError, instance: &str) -> Problem {
     let (status, slug, title) = match err {
-        ToolError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input"),
-        ToolError::NotFound(_) => (StatusCode::NOT_FOUND, "not-found", "Not found"),
-        ToolError::NotAuthorized(_) => (StatusCode::FORBIDDEN, "not-authorized", "Not authorized"),
+        ToolError::InvalidInput(_) => (Status::BAD_REQUEST, "invalid-input", "Invalid input"),
+        ToolError::NotFound(_) => (Status::NOT_FOUND, "not-found", "Not found"),
+        ToolError::NotAuthorized(_) => (Status::FORBIDDEN, "not-authorized", "Not authorized"),
         ToolError::LayeringViolation(_) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
+            Status::UNPROCESSABLE_ENTITY,
             "layering-violation",
             "Layering violation",
         ),
         ToolError::Unavailable(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
+            Status::SERVICE_UNAVAILABLE,
             "unavailable",
             "Capability unavailable",
         ),
         ToolError::StoreUnavailable { .. } => (
-            StatusCode::SERVICE_UNAVAILABLE,
+            Status::SERVICE_UNAVAILABLE,
             "store-unavailable",
             "Store unavailable",
         ),
-        ToolError::Failure(_) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "tool-failure",
-            "Tool failed",
-        ),
+        ToolError::Failure(_) => (Status::UNPROCESSABLE_ENTITY, "tool-failure", "Tool failed"),
         ToolError::Protocol(inner) => protocol_status(inner.code),
         ToolError::Storage(inner) => storage_status(inner),
-        ToolError::Other(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "Internal error",
-        ),
+        ToolError::Other(_) => (Status::INTERNAL_SERVER_ERROR, "internal", "Internal error"),
     };
     // The redaction seam. `Other` and the internal storage variants collapse
     // to a generic string here; nothing else in this module may reach for
@@ -103,99 +94,79 @@ fn idempotency_existing(err: &ToolError) -> Option<uuid::Uuid> {
     }
 }
 
-const fn protocol_status(code: ErrorCode) -> (StatusCode, &'static str, &'static str) {
+const fn protocol_status(code: ErrorCode) -> (Status, &'static str, &'static str) {
     match code {
         ErrorCode::AuthRequired => (
-            StatusCode::UNAUTHORIZED,
+            Status::UNAUTHORIZED,
             "auth-required",
             "Authentication required",
         ),
-        ErrorCode::Forbidden => (StatusCode::FORBIDDEN, "forbidden", "Forbidden"),
-        ErrorCode::UnknownSchema => (StatusCode::BAD_REQUEST, "unknown-schema", "Unknown schema"),
-        ErrorCode::InvalidArgument => (
-            StatusCode::BAD_REQUEST,
-            "invalid-argument",
-            "Invalid argument",
-        ),
-        ErrorCode::NotFound => (StatusCode::NOT_FOUND, "not-found", "Not found"),
+        ErrorCode::Forbidden => (Status::FORBIDDEN, "forbidden", "Forbidden"),
+        ErrorCode::UnknownSchema => (Status::BAD_REQUEST, "unknown-schema", "Unknown schema"),
+        ErrorCode::InvalidArgument => (Status::BAD_REQUEST, "invalid-argument", "Invalid argument"),
+        ErrorCode::NotFound => (Status::NOT_FOUND, "not-found", "Not found"),
         ErrorCode::ToolNotRegistered => (
-            StatusCode::NOT_FOUND,
+            Status::NOT_FOUND,
             "tool-not-registered",
             "Tool not registered",
         ),
-        ErrorCode::AlreadyIngested => {
-            (StatusCode::CONFLICT, "already-ingested", "Already ingested")
-        }
+        ErrorCode::AlreadyIngested => (Status::CONFLICT, "already-ingested", "Already ingested"),
         ErrorCode::IdempotencyConflict => (
-            StatusCode::CONFLICT,
+            Status::CONFLICT,
             "idempotency-conflict",
             "Idempotency conflict",
         ),
-        ErrorCode::TriggerConflict => {
-            (StatusCode::CONFLICT, "trigger-conflict", "Trigger conflict")
-        }
+        ErrorCode::TriggerConflict => (Status::CONFLICT, "trigger-conflict", "Trigger conflict"),
         ErrorCode::DuplicateTriggerInRequest => (
-            StatusCode::CONFLICT,
+            Status::CONFLICT,
             "duplicate-trigger-in-request",
             "Duplicate trigger in request",
         ),
         // 409, not 451. Suppression is a erasure primitive (13) and is not
         // necessarily a legal hold; 451 would overclaim.
-        ErrorCode::Suppressed => (StatusCode::CONFLICT, "suppressed", "Suppressed"),
+        ErrorCode::Suppressed => (Status::CONFLICT, "suppressed", "Suppressed"),
         // 503, as for the storage-level refusal below: retry later.
         ErrorCode::CapacityExhausted => (
-            StatusCode::SERVICE_UNAVAILABLE,
+            Status::SERVICE_UNAVAILABLE,
             "capacity-exhausted",
             "Capacity exhausted",
         ),
-        ErrorCode::Internal => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "Internal error",
-        ),
+        ErrorCode::Internal => (Status::INTERNAL_SERVER_ERROR, "internal", "Internal error"),
     }
 }
 
-fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str) {
+fn storage_status(err: &StorageError) -> (Status, &'static str, &'static str) {
     match err {
         StorageError::ConstraintViolation(_) | StorageError::GoalChildrenOpen { .. } => {
-            (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input")
+            (Status::BAD_REQUEST, "invalid-input", "Invalid input")
         }
         StorageError::Refused { rule, .. } => match rule.class() {
-            RuleClass::Invalid => (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input"),
-            RuleClass::Conflict => (StatusCode::CONFLICT, "conflict", "Conflict"),
-            RuleClass::Forbidden => (
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                "Refused by a storage rule",
-            ),
-            RuleClass::Deployment => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "Internal error",
-            ),
+            RuleClass::Invalid => (Status::BAD_REQUEST, "invalid-input", "Invalid input"),
+            RuleClass::Conflict => (Status::CONFLICT, "conflict", "Conflict"),
+            RuleClass::Forbidden => (Status::FORBIDDEN, "forbidden", "Refused by a storage rule"),
+            RuleClass::Deployment => (Status::INTERNAL_SERVER_ERROR, "internal", "Internal error"),
         },
         StorageError::Forbidden(_) => (
-            StatusCode::FORBIDDEN,
+            Status::FORBIDDEN,
             "forbidden",
             "Membership authorization refused",
         ),
         StorageError::UnreadableRead { .. } => {
-            (StatusCode::FORBIDDEN, "forbidden", "Read set not readable")
+            (Status::FORBIDDEN, "forbidden", "Read set not readable")
         }
-        StorageError::NotFound => (StatusCode::NOT_FOUND, "not-found", "Not found"),
+        StorageError::NotFound => (Status::NOT_FOUND, "not-found", "Not found"),
         StorageError::ScopeMissing { .. } => (
-            StatusCode::NOT_FOUND,
+            Status::NOT_FOUND,
             "scope-not-registered",
             "Scope not registered",
         ),
-        StorageError::Conflict(_) => (StatusCode::CONFLICT, "conflict", "Conflict"),
+        StorageError::Conflict(_) => (Status::CONFLICT, "conflict", "Conflict"),
         StorageError::IdempotencyConflict { .. } | StorageError::ReplayChanged(_) => (
-            StatusCode::CONFLICT,
+            Status::CONFLICT,
             "idempotency-conflict",
             "Idempotency conflict",
         ),
-        StorageError::Suppressed(_) => (StatusCode::CONFLICT, "suppressed", "Suppressed"),
+        StorageError::Suppressed(_) => (Status::CONFLICT, "suppressed", "Suppressed"),
         // A refused publication capture keeps the write path's own split:
         // an unexportable or oversized payload and a listenable write on
         // the receipt-only route are the caller's to fix; an unbound
@@ -204,7 +175,7 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
             proxiima_core::publication::PublicationError::PayloadTooLarge { .. }
             | proxiima_core::publication::PublicationError::ExportFailed(_)
             | proxiima_core::publication::PublicationError::UntypedListenableWrite { .. } => {
-                (StatusCode::BAD_REQUEST, "invalid-input", "Invalid input")
+                (Status::BAD_REQUEST, "invalid-input", "Invalid input")
             }
             // 503, not 500: the write was legal and the publisher is
             // behind, so this is "retry later", which is what `503` means
@@ -213,15 +184,13 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
             // `detail` keeps the backlog depth because `CapacityExhausted`
             // is its own `ToolErrorKind` and is therefore not redacted.
             proxiima_core::publication::PublicationError::CapacityExhausted { .. } => (
-                StatusCode::SERVICE_UNAVAILABLE,
+                Status::SERVICE_UNAVAILABLE,
                 "capacity-exhausted",
                 "Capacity exhausted",
             ),
-            proxiima_core::publication::PublicationError::SourceUnbound { .. } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "Internal error",
-            ),
+            proxiima_core::publication::PublicationError::SourceUnbound { .. } => {
+                (Status::INTERNAL_SERVER_ERROR, "internal", "Internal error")
+            }
         },
         StorageError::Retryable(_)
         | StorageError::Unavailable(_)
@@ -229,17 +198,16 @@ fn storage_status(err: &StorageError) -> (StatusCode, &'static str, &'static str
         | StorageError::InvalidStoredInterpretation { .. }
         | StorageError::MemoryIdCollision
         | StorageError::SchemaResetRequired { .. }
-        | StorageError::MigrationRequired { .. } => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "Internal error",
-        ),
+        | StorageError::MigrationRequired { .. } => {
+            (Status::INTERNAL_SERVER_ERROR, "internal", "Internal error")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use proxiima_core::StorageRule;
     use proxiima_core::error::ProtocolError;

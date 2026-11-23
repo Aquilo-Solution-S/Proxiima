@@ -1199,6 +1199,33 @@ async fn host_tool_meta_and_open_world_hint_reach_tools_list() {
     assert_eq!(plain["outputSchema"]["type"], "object");
 }
 
+#[tokio::test]
+async fn registered_tool_reach_reaches_mcp_tool_list() {
+    let response = first_message(
+        mcp_service_for(stub_host()),
+        authed_rpc("tools/list", auth_for(personal_owner())),
+    )
+    .await;
+    let tools = response["result"]["tools"].as_array().unwrap();
+    for (name, read_only, open_world) in [
+        (
+            proxiima_core::protocol::tool::CORE_SEARCH_MEMORIES,
+            true,
+            true,
+        ),
+        (proxiima_core::protocol::tool::CORE_UPLOAD, false, true),
+        (
+            proxiima_core::protocol::tool::CORE_MEMORY_SPACES,
+            true,
+            false,
+        ),
+    ] {
+        let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], read_only);
+        assert_eq!(tool["annotations"]["openWorldHint"], open_world);
+    }
+}
+
 /// Every request reads the host catalog once, whether or not calls are
 /// recorded: `tools/list` once, a host `tools/call` once, a registry
 /// `tools/call` not at all.

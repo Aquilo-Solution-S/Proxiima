@@ -261,11 +261,22 @@ pub struct ScopeGateBehavior;
 impl ScopeGateBehavior {
     /// Admit or refuse one call; an admitted call answers what it asks of
     /// its owner.
+    #[cfg(test)]
     fn enforce_scope(
         tool: &str,
         args: &serde_json::Value,
         ctx: &ToolCtx,
     ) -> Result<OwnerAccess, ToolError> {
+        Self::admit(tool, args, ctx).map(|(access, _)| access)
+    }
+
+    fn admit(
+        tool: &str,
+        args: &serde_json::Value,
+        ctx: &ToolCtx,
+    ) -> Result<(OwnerAccess, Option<super::tool::AdmittedArgv>), ToolError> {
+        let mut admitted_argv = None;
+        // `Proxiima.ToolSurface.callChecks`.
         ctx.judged_cell().clear();
         let capabilities = ctx.authz().capabilities();
         // The request name is parsed once, here. A name that is no key is in
@@ -327,13 +338,9 @@ impl ScopeGateBehavior {
                 let Ok(ScopeKey::Tool(tool_name)) = &key else {
                     return Err(ToolError::NotAuthorized(tool.to_string()));
                 };
-                // The same resolution the terminal dispatch runs, once, so
-                // the gate and the call share one vocabulary: argv matching
-                // no declared prefix is undeclared here and refused below
-                // rather than sailing past into the tool.
-                let resolved = super::resolve_argv_action(tool, descriptor.argv_action_specs, args);
-                let declared = descriptor.declaration(resolved.as_ref().ok().copied());
-                let action = resolved?;
+                let spec = super::resolve_argv_action(tool, descriptor.argv_action_specs, args)?;
+                let action = spec.action;
+                let declared = descriptor.declaration(Some(action));
                 let Ok(action_name) = ActionName::parse(action) else {
                     return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
                 };
@@ -341,6 +348,12 @@ impl ScopeGateBehavior {
                 if !capabilities.admits_action(tool_name, &action_name, declared) {
                     return Err(ToolError::NotAuthorized(format!("{tool}:{action}")));
                 }
+                // `Proxiima.ToolSurface.argvResolutionSource`.
+                admitted_argv = Some(super::tool::AdmittedArgv::new(
+                    descriptor.name,
+                    spec,
+                    args["argv"].clone(),
+                ));
                 declared.owner_access()
             }
             _ => {
@@ -363,7 +376,7 @@ impl ScopeGateBehavior {
         };
         let owner = Self::resolve_scope_owner(tool, args, ctx)?;
         Self::enforce_owner_role(tool, access, owner.owner, ctx)?;
-        Ok(access)
+        Ok((access, admitted_argv))
     }
 
     /// Read the host read set's other-store reads (#677) through the
@@ -510,8 +523,9 @@ impl ScopeGateBehavior {
 
 #[async_trait]
 impl RequestBehavior for ScopeGateBehavior {
-    async fn handle(&self, call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
-        let access = Self::enforce_scope(&call.name, &call.args, &call.ctx)?;
+    async fn handle(&self, mut call: ToolCall, next: Next<'_>) -> Result<ToolReply, ToolError> {
+        let (access, admitted_argv) = Self::admit(&call.name, &call.args, &call.ctx)?;
+        call.ctx.admitted_argv = admitted_argv;
         next.run(Self::read_other_store_reads(call, access).await?)
             .await
     }

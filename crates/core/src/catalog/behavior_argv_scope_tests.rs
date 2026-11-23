@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 
-use super::ScopeGateBehavior;
-use crate::catalog::{ArgvActionSpec, OwnerNeed, Replay, ToolAudience, ToolEffect, ToolErrorKind};
+use super::{Next, RequestBehavior, ScopeGateBehavior, ToolCall};
+use crate::catalog::{
+    ArgvActionSpec, OwnerNeed, Replay, ToolAudience, ToolEffect, ToolErrorKind, ToolReply,
+};
 use crate::{AuthPath, AuthzContext, OwnerId, ScopeKey, SpiiceRegistry, ToolScope, UserId};
 use crate::{Tool, ToolCtx, ToolError};
 
@@ -18,6 +20,7 @@ fn palette(ids: &[&str]) -> ToolScope {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ArgvArgs {
     #[schemars(description = "command words followed by flags")]
+    #[serde(rename = "argv")]
     _argv: Vec<String>,
 }
 
@@ -125,13 +128,77 @@ fn enforce_scope_gates_the_derived_argv_action() {
     );
 }
 
-/// An argv dispatcher's commands are titled like a tagged one's.
 #[test]
-fn the_descriptor_titles_an_argv_dispatchers_commands() {
+fn title_lookup_matches_ledger_vectors() {
     let ctx = argv_ctx(ToolScope::All);
     let descriptor = ctx.registry().mcp_tool(ArgvTool::NAME).expect("registered");
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+    for row in vectors["Proxiima.ToolSurface.titleKeyAdmitted"]
+        .as_array()
+        .unwrap()
+    {
+        let key = match row["in"][0].as_str().unwrap() {
+            "ownTool" => ArgvTool::NAME.to_owned(),
+            "declaredAction" => format!("{}:approval-decide", ArgvTool::NAME),
+            "unknownAction" => format!("{}:unregistered", ArgvTool::NAME),
+            "foreignTool" => "other_tool".to_owned(),
+            "resource" => "resource:memory".to_owned(),
+            other => panic!("unknown title vector input {other}"),
+        };
+        let key = ScopeKey::parse(&key).expect("valid key");
+        assert_eq!(
+            descriptor.title_of(&key).is_some(),
+            row["out"].as_bool().unwrap(),
+            "{row}"
+        );
+    }
     let key = ScopeKey::parse(&format!("{}:approval-decide", ArgvTool::NAME)).expect("a key");
     assert_eq!(descriptor.title_of(&key), Some("Test action"));
+}
+
+#[tokio::test]
+async fn registered_terminal_uses_the_admitted_argv() {
+    for change in [false, true] {
+        let ctx = argv_ctx(ToolScope::All);
+        let call = ctx
+            .registry()
+            .mcp_tool(ArgvTool::NAME)
+            .expect("registered")
+            .call;
+        let next = Next::new(
+            &[],
+            Box::new(move |mut request| {
+                Box::pin(async move {
+                    if change {
+                        request.args["argv"] = serde_json::json!(["approval", "decide"]);
+                    }
+                    call(request.ctx, request.args)
+                        .await
+                        .map(ToolReply::Structured)
+                })
+            }),
+        );
+        let result = ScopeGateBehavior
+            .handle(
+                ToolCall {
+                    name: ArgvTool::NAME.to_owned(),
+                    args: serde_json::json!({"argv": ["approval"]}),
+                    ctx,
+                },
+                next,
+            )
+            .await;
+        if change {
+            assert!(matches!(result, Err(ToolError::InvalidInput(ref reason))
+                if reason == "argv changed after authorization"));
+        } else {
+            assert_eq!(
+                result.unwrap(),
+                ToolReply::Structured(serde_json::json!({}))
+            );
+        }
+    }
 }
 
 /// The recorded key is the one the gate derived by longest prefix.

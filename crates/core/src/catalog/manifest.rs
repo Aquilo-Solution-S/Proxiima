@@ -20,8 +20,8 @@ pub struct ToolAnnotations {
 }
 
 impl ToolAnnotations {
-    /// A registered substrate or spiice tool: `openWorldHint: false`, since
-    /// it reaches this deployment's own state and nothing else.
+    /// Hints for a deployment-local operation. For a registered tool, use
+    /// [`super::ToolDescriptor::annotations_for_effect`] to include its declared reach.
     #[must_use]
     pub const fn registered(effect: ToolEffect) -> Self {
         let mut hints = Self::host(effect);
@@ -33,6 +33,7 @@ impl ToolAnnotations {
     /// its tool reaches.
     #[must_use]
     pub const fn host(effect: ToolEffect) -> Self {
+        // `Proxiima.ToolSurface.effectHints`.
         let (destructive, idempotent) = match effect {
             ToolEffect::ReadOnly => (None, None),
             ToolEffect::Additive(replay) => {
@@ -241,11 +242,71 @@ mod effect_tests {
         assert!(!excluded.iter().any(|key| matches!(key, crate::ScopeKey::Action { tool, .. } if tool.as_str() == crate::protocol::tool::CORE_MEMBERSHIP)));
     }
 
+    #[test]
+    fn registration_projects_reach_independently_of_effect() {
+        let registry = crate::SpiiceRegistry::new().freeze_or_panic_for_tests();
+        for (name, hints) in [
+            (crate::protocol::tool::CORE_SEARCH_MEMORIES, (true, true)),
+            (crate::protocol::tool::CORE_UPLOAD, (false, true)),
+            (crate::protocol::tool::CORE_MEMORY_SPACES, (true, false)),
+        ] {
+            let annotations = registry.mcp_tool(name).unwrap().annotations().unwrap();
+            assert_eq!(
+                (annotations.read_only, annotations.open_world),
+                (Some(hints.0), Some(hints.1))
+            );
+        }
+    }
+
     /// The projection never emits a combination MCP gives no meaning:
     /// a read carries no destructive/idempotent hint, a write carries both.
     #[test]
     fn every_effect_projects_to_one_wire_shape() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        let hints_rows = vectors["Proxiima.ToolSurface.effectHints"]
+            .as_array()
+            .unwrap();
+        let replay_rows = vectors["Proxiima.ToolSurface.replayOf"].as_array().unwrap();
+        assert_eq!(hints_rows.len(), ALL_EFFECTS.len());
+        assert_eq!(replay_rows.len(), ALL_EFFECTS.len());
         for effect in ALL_EFFECTS {
+            let replay = if effect.replay() == Replay::Idempotent {
+                "idempotent"
+            } else {
+                "nonIdempotent"
+            };
+            let input = match effect {
+                super::ToolEffect::ReadOnly => serde_json::json!("readOnly"),
+                super::ToolEffect::Additive(replay) => serde_json::json!({
+                    "additive": [if replay == Replay::Idempotent { "idempotent" } else { "nonIdempotent" }]
+                }),
+                super::ToolEffect::Destructive(replay) => serde_json::json!({
+                    "destructive": [if replay == Replay::Idempotent { "idempotent" } else { "nonIdempotent" }]
+                }),
+            };
+            let hint_row = hints_rows.iter().find(|row| row["in"][0] == input).unwrap();
+            let replay_row = replay_rows
+                .iter()
+                .find(|row| row["in"][0] == input)
+                .unwrap();
+            let host = ToolAnnotations::host(effect);
+            assert_eq!(
+                host.read_only,
+                hint_row["out"]["readOnly"].as_bool(),
+                "{hint_row}"
+            );
+            assert_eq!(
+                host.destructive,
+                hint_row["out"]["destructive"].as_bool(),
+                "{hint_row}"
+            );
+            assert_eq!(
+                host.idempotent,
+                hint_row["out"]["idempotent"].as_bool(),
+                "{hint_row}"
+            );
+            assert_eq!(replay_row["out"], replay, "{replay_row}");
             let hints = ToolAnnotations::registered(effect);
             assert_eq!(hints.read_only, Some(effect.is_read_only()));
             assert_eq!(hints.open_world, Some(false));

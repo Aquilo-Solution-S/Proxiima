@@ -68,7 +68,8 @@ impl SpiiceRegistry {
     /// # Errors
     ///
     /// Returns `InvalidToolName` for invalid names, `ConflictingActionVocabularies`
-    /// for a tool declaring both action vocabularies, or
+    /// for a tool declaring both action vocabularies,
+    /// `InvalidUnknownFieldPolicy` for tolerance on a tool other than a flat read, or
     /// `InvalidToolOutputSchema` when the output type does not describe an
     /// object root.
     pub fn try_add_tool<T: Tool>(
@@ -78,14 +79,8 @@ impl SpiiceRegistry {
         let slash = format!("{expected_prefix}/");
         let under = format!("{expected_prefix}_");
         validate_tool_name(T::NAME, expected_prefix, &slash, &under)?;
-        // One action vocabulary per tool, decided here rather than at the
-        // first call: were both spec kinds live, the scope gate, the
-        // catalog, and the validator would each have to pick which one
-        // names an action, and any disagreement would be a runtime
-        // surprise instead of a registration error.
-        if !T::ACTION_ARG_SPECS.is_empty() && !T::ARGV_ACTION_SPECS.is_empty() {
-            return Err(SpiiceRegistryError::ConflictingActionVocabularies { name: T::NAME });
-        }
+        validate_argument_policy::<T>()?;
+        // `Proxiima.ToolSurface.schemaPreparation`.
         let crate::catalog::schema::ArgsSchema {
             schema: args_schema,
             dispatcher: dispatcher_schema,
@@ -111,13 +106,10 @@ impl SpiiceRegistry {
         let call: CallFn = Box::leak(Box::new(move |ctx, mut args| -> BoxFuture<'static, _> {
             let properties = properties.clone();
             Box::pin(async move {
-                // Dispatcher tools (non-empty specs) run per-action validation;
-                // argv-keyed tools resolve the action key (closed set — argv
-                // matching no declared prefix is refused here) and leave flag
-                // validation to their own dispatch; flat tools run the flat
-                // unknown-field + space-alias guard instead of silently
-                // accepting unknown fields.
+                let mut ctx: crate::ToolCtx = ctx;
+                let admitted_argv = ctx.admitted_argv.take();
                 let mut ignored = Vec::new();
+                // `Proxiima.ToolSurface.actionArgumentSource`.
                 let effect = if !T::ACTION_ARG_SPECS.is_empty() {
                     validate_action_args(T::NAME, T::ACTION_ARG_SPECS, &args)?;
                     let action = args.get("action").and_then(serde_json::Value::as_str);
@@ -126,13 +118,19 @@ impl SpiiceRegistry {
                         .find(|spec| Some(spec.action) == action)
                         .map(|spec| spec.effect)
                 } else if !T::ARGV_ACTION_SPECS.is_empty() {
-                    let action =
-                        crate::catalog::resolve_argv_action(T::NAME, T::ARGV_ACTION_SPECS, &args)?;
-                    T::ARGV_ACTION_SPECS
-                        .iter()
-                        .find(|spec| spec.action == action)
-                        .map(|spec| spec.effect)
+                    Some(match admitted_argv {
+                        Some(resolved) => resolved.effect(T::NAME, &args)?,
+                        None => {
+                            crate::catalog::resolve_argv_action(
+                                T::NAME,
+                                T::ARGV_ACTION_SPECS,
+                                &args,
+                            )?
+                            .effect
+                        }
+                    })
                 } else {
+                    // `Proxiima.ToolSurface.flatArguments`.
                     ignored = prepare_flat_tool_args(
                         T::NAME,
                         &properties,
@@ -145,7 +143,6 @@ impl SpiiceRegistry {
                 // so stamping here is what lets a verb ask which tool — and
                 // which action's effect — is calling without trusting
                 // anything the call carried.
-                let ctx: crate::ToolCtx = ctx;
                 let authz = ctx.authz().clone().invoked_by_tool(crate::InvokingTool {
                     name: T::NAME,
                     effect,
@@ -179,10 +176,30 @@ impl SpiiceRegistry {
             argv_action_specs: T::ARGV_ACTION_SPECS,
             effect: <T as Tool>::EFFECT,
             audience: <T as Tool>::AUDIENCE,
+            open_world: T::OPEN_WORLD,
             call,
         });
         Ok(())
     }
+}
+
+fn validate_argument_policy<T: Tool>() -> Result<(), SpiiceRegistryError> {
+    let tagged = !T::ACTION_ARG_SPECS.is_empty();
+    let argv = !T::ARGV_ACTION_SPECS.is_empty();
+    if tagged && argv {
+        return Err(SpiiceRegistryError::ConflictingActionVocabularies { name: T::NAME });
+    }
+    if T::UNKNOWN_FIELD_POLICY == crate::catalog::UnknownFieldPolicy::IgnoreAndReport
+        && !tolerant_fields_allowed(tagged || argv, T::EFFECT)
+    {
+        return Err(SpiiceRegistryError::InvalidUnknownFieldPolicy { name: T::NAME });
+    }
+    Ok(())
+}
+
+fn tolerant_fields_allowed(dispatches: bool, effect: Option<crate::ToolEffect>) -> bool {
+    // `Proxiima.ToolSurface.tolerantFieldsAllowed`.
+    !dispatches && effect == Some(crate::ToolEffect::ReadOnly)
 }
 
 fn validate_tool_name(
@@ -530,21 +547,54 @@ mod unknown_field_policy_tests {
         text: String,
     }
 
-    /// A read-only flat tool that tolerates the fields a model copies out of
+    /// A flat tool that tolerates the fields a model copies out of
     /// a previous result into the next call.
-    struct TolerantEcho;
+    struct TolerantEcho<const READ_ONLY: bool>;
 
-    impl Tool for TolerantEcho {
+    impl<const READ_ONLY_TOOL: bool> Tool for TolerantEcho<READ_ONLY_TOOL> {
         const TITLE: &'static str = "Test tool";
         const NAME: &'static str = "proxiima-stub_tolerant";
         const DESCRIPTION: &'static str = "A flat fixture tolerating unknown argument fields.";
-        const EFFECT: Option<ToolEffect> = READ_ONLY;
+        const EFFECT: Option<ToolEffect> = if READ_ONLY_TOOL {
+            READ_ONLY
+        } else {
+            Some(ToolEffect::Additive(crate::Replay::NonIdempotent))
+        };
         const UNKNOWN_FIELD_POLICY: UnknownFieldPolicy = UnknownFieldPolicy::IgnoreAndReport;
         type Args = EchoArgs;
         type Output = EchoOutput;
         fn call(_: ToolCtx, args: Self::Args) -> BoxFuture<'static, Result<EchoOutput, ToolError>> {
             Box::pin(async move { Ok(EchoOutput { text: args.text }) })
         }
+    }
+
+    #[test]
+    fn tolerant_field_eligibility_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json")).unwrap();
+        for row in vectors["Proxiima.ToolSurface.tolerantFieldsAllowed"]
+            .as_array()
+            .unwrap()
+        {
+            let dispatches = row["in"][0] != "flat";
+            let read_only = row["in"][1].as_bool().unwrap();
+            let effect = read_only.then_some(ToolEffect::ReadOnly);
+            assert_eq!(
+                super::tolerant_fields_allowed(dispatches, effect),
+                row["out"].as_bool().unwrap(),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_write_tool_cannot_register_with_tolerant_fields() {
+        let result = SpiiceRegistry::new().try_add_tool::<TolerantEcho<false>>("proxiima-stub");
+        assert!(matches!(
+            result,
+            Err(crate::SpiiceRegistryError::InvalidUnknownFieldPolicy { name })
+                if name == TolerantEcho::<false>::NAME
+        ));
     }
 
     /// The same tool answering with a bare scalar: there is no object to
@@ -581,7 +631,7 @@ mod unknown_field_policy_tests {
 
     fn registry() -> crate::SpiiceRegistryFrozen {
         let mut registry = SpiiceRegistry::new();
-        registry.add_tool_or_panic_for_tests::<TolerantEcho>("proxiima-stub");
+        registry.add_tool_or_panic_for_tests::<TolerantEcho<true>>("proxiima-stub");
         registry.add_tool_or_panic_for_tests::<StrictEcho>("proxiima-stub");
         registry.freeze_or_panic_for_tests()
     }
@@ -600,7 +650,7 @@ mod unknown_field_policy_tests {
     #[tokio::test]
     async fn tolerated_fields_are_dropped_and_named_in_the_result() {
         let output = call(
-            TolerantEcho::NAME,
+            TolerantEcho::<true>::NAME,
             serde_json::json!({ "text": "x", "has_more": true, "provenance": { "id": 1 } }),
         )
         .await
@@ -615,9 +665,12 @@ mod unknown_field_policy_tests {
     /// not as a permanent part of the reply.
     #[tokio::test]
     async fn nothing_is_reported_when_nothing_was_dropped() {
-        let output = call(TolerantEcho::NAME, serde_json::json!({ "text": "x" }))
-            .await
-            .expect("declared fields dispatch");
+        let output = call(
+            TolerantEcho::<true>::NAME,
+            serde_json::json!({ "text": "x" }),
+        )
+        .await
+        .expect("declared fields dispatch");
         assert_eq!(output, serde_json::json!({ "text": "x" }));
     }
 

@@ -18,7 +18,7 @@ use proxiima_core::{MemoryId, RELEASE_VERSION, ToolCaller};
 
 use crate::auth::AuthContext;
 use crate::mcp::handler::{MODEL_ID_ARG, SELF_PERSPECTIVE_ARGS};
-use crate::problem::Problem;
+use crate::problem::{Problem, ProblemStatus};
 
 /// Model label for the write's provenance.
 pub const MODEL_ID_HEADER: &str = "X-Proxiima-Model-Id";
@@ -162,7 +162,7 @@ pub fn author_from_headers(
     let model_id = resolve_operator_label(trusted, header_str(headers, MODEL_ID_HEADER)).map_err(
         |conflict| {
             Problem::new(
-                axum::http::StatusCode::BAD_REQUEST,
+                ProblemStatus::BAD_REQUEST,
                 "model-id-conflict",
                 "Model id conflicts with the authenticated token",
                 conflict.detail(MODEL_ID_HEADER),
@@ -200,7 +200,7 @@ pub fn reject_reserved_arguments(args: &serde_json::Value, instance: &str) -> Re
     for (field, header_name) in RESERVED_ARGUMENTS {
         if object.contains_key(*field) {
             return Err(Problem::new(
-                axum::http::StatusCode::BAD_REQUEST,
+                ProblemStatus::BAD_REQUEST,
                 "reserved-argument",
                 "Reserved argument in request body",
                 format!(

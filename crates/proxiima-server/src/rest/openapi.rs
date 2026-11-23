@@ -29,15 +29,16 @@ use crate::mcp::handler::{
     Caller, action_allowed_for_auth, annotations_for_auth, how_to_allowed_for_auth,
     project_dispatcher_actions_for_auth, resource_allowed_for_auth, tool_allowed_for_auth,
 };
+use crate::problem::ProblemStatus;
 use crate::rest::context::{MODEL_ID_HEADER, SELF_PERSPECTIVE_HEADER};
 use crate::security::PROXIIMA_OWNER_HEADER;
 
 /// The `query` Path Item fixed field arrives in 3.2; the 2020-12 dialect is
 /// unchanged from 3.1, so `args_schema` embeds verbatim.
-const OPENAPI_VERSION: &str = "3.2.0";
+const OPENAPI_VERSION: &str = proxiima_core::ledger!(Proxiima.ToolSurface.openApiVersion);
 
 /// Dialect of every embedded schema — what schemars emits for `T::Args`.
-const JSON_SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
+const JSON_SCHEMA_DIALECT: &str = proxiima_core::ledger!(Proxiima.ToolSurface.openApiSchemaDialect);
 
 /// Name of the single security scheme; every operation requires it.
 const BEARER_SCHEME: &str = "bearerAuth";
@@ -64,46 +65,6 @@ const CONTEXT_HEADERS: &[(&str, bool, &str)] = &[
         false,
         "Bare UUID for the caller's self perspective. Sending it in the \
          request body is a `400`.",
-    ),
-];
-
-/// The REST statuses, each rendered as RFC 9457
-/// `application/problem+json`: the routes' own (`rest::error`) and the
-/// listener's guards in front of them (`crate::problem`). The mappings
-/// belong there; this list only has to advertise the same set.
-const PROBLEM_STATUSES: &[(u16, &str)] = &[
-    (
-        400,
-        "Invalid input, a reserved call-context argument in the request body, \
-         an unknown schema, a body `action` conflicting with the route, or a \
-         missing or malformed Host header.",
-    ),
-    (401, "Bearer token missing or invalid."),
-    (
-        403,
-        "Not authorized for this tool or action, or a Host, Origin, or owner \
-         selection the listener refuses.",
-    ),
-    (
-        404,
-        "No such tool, action, resource, or memory, or an unknown or expired \
-         `Mcp-Session-Id`.",
-    ),
-    (
-        409,
-        "Idempotency conflict, duplicate ingest, trigger conflict, or a \
-         suppressed subject.",
-    ),
-    (
-        422,
-        "The write would violate F/A/P layering, or the tool ran and failed \
-         (`tool-failure`, the tool's text as detail).",
-    ),
-    (413, "Request body larger than the listener's limit."),
-    (500, "Internal error. The detail is deliberately generic."),
-    (
-        503,
-        "A caller-actionable precondition is unavailable; retry is meaningful.",
     ),
 ];
 
@@ -214,6 +175,7 @@ fn collect_how_to_path(paths: &mut BTreeMap<String, Value>) {
         produces_schema_ids: &[],
         output_schema: None,
         annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+        query_dispatches: false,
     }
     .render("get");
     operation["responses"]["200"]["content"] = json!({
@@ -237,6 +199,7 @@ struct Operation<'a> {
     /// answer type. `None` for the guide, whose body is markdown.
     output_schema: Option<&'a Value>,
     annotations: ToolAnnotations,
+    query_dispatches: bool,
 }
 
 /// The structural identity of an operation before its HTTP method is added.
@@ -308,7 +271,11 @@ impl Operation<'_> {
         }
         operation.insert(
             "responses".to_string(),
-            responses(self.produces_schema_ids, self.output_schema),
+            responses(
+                self.produces_schema_ids,
+                self.output_schema,
+                method == "query" && self.query_dispatches,
+            ),
         );
         // Stated per operation rather than once at the root: this document is
         // generated per caller and routinely sliced by client generators, and
@@ -340,6 +307,7 @@ fn collect_tool_paths(
         produces_schema_ids: tool.produces_schema_ids,
         output_schema: Some(&tool.output_schema),
         annotations,
+        query_dispatches: !tool.action_arg_specs.is_empty() || !tool.argv_action_specs.is_empty(),
     };
     paths.insert(format!("/v1/tools/{}", tool.name), tool_path_item(&whole));
 
@@ -359,7 +327,7 @@ fn collect_tool_paths(
         });
         // Per-action, not tool-level: the spec's effect is the same
         // authority the owner-role gate and router read.
-        let action_annotations = ToolAnnotations::registered(spec.effect);
+        let action_annotations = tool.annotations_for_effect(spec.effect);
         let action_description = tool.action_description(action).unwrap_or(tool.description);
         let narrowed = Operation {
             target: OperationTarget::Action {
@@ -373,6 +341,7 @@ fn collect_tool_paths(
             produces_schema_ids: tool.produces_schema_ids,
             output_schema: Some(&tool.output_schema),
             annotations: action_annotations,
+            query_dispatches: false,
         };
         paths.insert(
             format!("/v1/tools/{}/{action}", tool.name),
@@ -432,6 +401,7 @@ fn collect_resource_path(resource: &ResourceContract, paths: &mut BTreeMap<Strin
         produces_schema_ids: &[],
         output_schema: Some(&answer),
         annotations: ToolAnnotations::registered(ToolEffect::ReadOnly),
+        query_dispatches: false,
     };
     let mut item = Map::new();
     item.insert("get".to_string(), operation.render("get"));
@@ -493,13 +463,23 @@ fn string_list(value: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn responses(produces_schema_ids: &[&str], output_schema: Option<&Value>) -> Value {
+fn responses(
+    produces_schema_ids: &[&str],
+    output_schema: Option<&Value>,
+    query_dispatches: bool,
+) -> Value {
     let mut responses = Map::new();
     responses.insert(
         "200".to_string(),
         success_response(produces_schema_ids, output_schema),
     );
-    for (status, _) in PROBLEM_STATUSES {
+    // An unsupported method has no operation. A whole-dispatcher QUERY
+    // can still select an action that only accepts POST.
+    for (status, _) in ProblemStatus::DOCUMENTED {
+        if *status == axum::http::StatusCode::METHOD_NOT_ALLOWED && !query_dispatches {
+            continue;
+        }
+        let status = status.as_str();
         responses.insert(
             status.to_string(),
             json!({ "$ref": format!("#/components/responses/Problem{status}") }),
@@ -552,7 +532,8 @@ fn components() -> Value {
     }
 
     let mut error_responses = Map::new();
-    for (status, description) in PROBLEM_STATUSES {
+    for (status, description) in ProblemStatus::DOCUMENTED {
+        let status = status.as_str();
         error_responses.insert(
             format!("Problem{status}"),
             json!({
@@ -629,7 +610,9 @@ mod tests {
     use proxiima_core::protocol::tool as protocol_tool;
     use proxiima_core::{SpiiceRegistry, SpiiceRegistryFrozen};
 
-    use super::{ResourceContract, ToolDescriptor, Value, all_core_resources, document};
+    use super::{
+        ProblemStatus, ResourceContract, ToolDescriptor, Value, all_core_resources, document,
+    };
 
     fn frozen_registry() -> SpiiceRegistryFrozen {
         SpiiceRegistry::default()
@@ -844,9 +827,27 @@ mod tests {
             &document,
             &format!("/v1/tools/{}", protocol_tool::CORE_REMEMBER),
         );
-        for status in [
-            "400", "401", "403", "404", "409", "413", "422", "500", "503",
-        ] {
+        assert!(item.pointer("/post/responses/405").is_none());
+        let dispatcher = path_item(
+            &document,
+            &format!("/v1/tools/{}", protocol_tool::CORE_FACT),
+        );
+        assert_eq!(
+            dispatcher
+                .pointer("/query/responses/405/$ref")
+                .and_then(Value::as_str),
+            Some("#/components/responses/Problem405"),
+        );
+        assert!(
+            document
+                .pointer("/components/responses/Problem405")
+                .is_some()
+        );
+        for (status, _) in ProblemStatus::DOCUMENTED {
+            if *status == axum::http::StatusCode::METHOD_NOT_ALLOWED {
+                continue;
+            }
+            let status = status.as_str();
             assert_eq!(
                 item.pointer(&format!("/post/responses/{status}/$ref"))
                     .and_then(Value::as_str),

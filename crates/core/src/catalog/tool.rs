@@ -1,15 +1,16 @@
 use futures::future::BoxFuture;
 
-use crate::authz::{KeyDeclaration, OwnerNeed, ToolAudience};
+use crate::authz::{KeyDeclaration, OwnerNeed, ToolAudience, ToolEffect};
 use crate::{ActionName, CapabilitySet, ScopeKey, ScopeKeyError, ToolCtx, ToolError, ToolName};
 
 /// The longest title ([`ActionArgSpec::title`], [`ToolDescriptor::title`]),
 /// in characters: a label beside a recorded call, not a description.
-pub const MAX_TITLE_CHARS: usize = 60;
+pub const MAX_TITLE_CHARS: usize = crate::ledger!(Proxiima.ToolSurface.maxTitleChars);
 
 /// Why `title` is no title, or `None` when it is one: a single line of
 /// 1 to [`MAX_TITLE_CHARS`] characters with no edge whitespace.
 pub(crate) fn title_problem(title: &str) -> Option<&'static str> {
+    // `Proxiima.ToolSurface.titleChecks`.
     if title.is_empty() {
         Some("is empty")
     } else if title.trim() != title {
@@ -92,6 +93,8 @@ pub struct ToolDescriptor {
     /// the owner alone. See [`ToolAudience`] for what the declaration is
     /// and is not.
     pub audience: ToolAudience,
+    /// Whether any operation of this tool can reach outside the deployment.
+    pub open_world: bool,
     pub call: CallFn,
 }
 
@@ -114,7 +117,7 @@ impl ToolDescriptor {
     #[must_use]
     pub fn annotations(&self) -> Option<crate::catalog::ToolAnnotations> {
         self.effect()
-            .map(crate::catalog::ToolAnnotations::registered)
+            .map(|effect| self.annotations_for_effect(effect))
     }
 
     /// Every action of either dispatcher vocabulary with its declared
@@ -135,6 +138,7 @@ impl ToolDescriptor {
     /// another tool, an action the tool does not declare, and a resource.
     #[must_use]
     pub fn title_of(&self, key: &crate::ScopeKey) -> Option<&'static str> {
+        // `Proxiima.ToolSurface.titleKeyAdmitted`.
         match key {
             crate::ScopeKey::Tool(tool) if tool.as_str() == self.name => Some(self.title),
             crate::ScopeKey::Action { tool, action } if tool.as_str() == self.name => self
@@ -167,6 +171,15 @@ impl ToolDescriptor {
             .find(|spec| spec.action == action)
     }
 
+    /// Transport hints for the effects visible to the caller and this tool's reach.
+    #[must_use]
+    pub const fn annotations_for_effect(&self, effect: ToolEffect) -> super::ToolAnnotations {
+        super::ToolAnnotations {
+            open_world: Some(self.open_world),
+            ..super::ToolAnnotations::host(effect)
+        }
+    }
+
     /// The action key one `{argv, …}` payload resolves to, or `None` when
     /// this tool is not argv-keyed or the argv matches no declared command.
     ///
@@ -179,7 +192,9 @@ impl ToolDescriptor {
         if self.argv_action_specs.is_empty() {
             return None;
         }
-        resolve_argv_action(self.name, self.argv_action_specs, args).ok()
+        resolve_argv_action(self.name, self.argv_action_specs, args)
+            .ok()
+            .map(|spec| spec.action)
     }
 
     /// What one action of this tool does. **The single classification
@@ -380,6 +395,7 @@ impl ToolDescriptor {
     /// [`ScopeKeyError`] for a tool or action name outside the grammar, or
     /// an action under the tool `resource`.
     pub(crate) fn scope_keys(&self) -> Result<Vec<(ScopeKey, ToolAudience)>, ScopeKeyError> {
+        // `Proxiima.ToolSurface.toolKeyForm`.
         let tool = ToolName::parse(self.name)?;
         let tool_audience = self.audience;
         let effective = move |action: ToolAudience| {
@@ -461,6 +477,7 @@ impl std::fmt::Debug for ToolDescriptor {
             .field("action_arg_specs", &self.action_arg_specs)
             .field("argv_action_specs", &self.argv_action_specs)
             .field("effect", &self.effect)
+            .field("open_world", &self.open_world)
             .field("audience", &self.audience)
             .field("call", &"<callable>")
             .finish()
@@ -529,9 +546,9 @@ pub struct ArgvActionSpec {
 /// grammar past the action key.
 pub(crate) fn resolve_argv_action(
     tool_name: &str,
-    specs: &[ArgvActionSpec],
+    specs: &'static [ArgvActionSpec],
     args: &serde_json::Value,
-) -> Result<&'static str, ToolError> {
+) -> Result<&'static ArgvActionSpec, ToolError> {
     let words = args
         .get("argv")
         .and_then(serde_json::Value::as_array)
@@ -559,7 +576,6 @@ pub(crate) fn resolve_argv_action(
                     .all(|(expected, actual)| expected == actual)
         })
         .max_by_key(|spec| spec.argv_prefix.len())
-        .map(|spec| spec.action)
         .ok_or_else(|| {
             let supported = specs
                 .iter()
@@ -637,6 +653,38 @@ pub(crate) fn validate_action_args(
         )));
     }
     Ok(())
+}
+
+/// The command admitted by the scope gate, bound to the argv it judged.
+#[derive(Clone)]
+pub(crate) struct AdmittedArgv {
+    tool: &'static str,
+    spec: &'static ArgvActionSpec,
+    argv: serde_json::Value,
+}
+
+impl AdmittedArgv {
+    pub(super) fn new(
+        tool: &'static str,
+        spec: &'static ArgvActionSpec,
+        argv: serde_json::Value,
+    ) -> Self {
+        Self { tool, spec, argv }
+    }
+
+    pub(crate) fn effect(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Result<ToolEffect, ToolError> {
+        // A behavior can replace arguments before reaching the terminal.
+        if self.tool != tool || args.get("argv") != Some(&self.argv) {
+            return Err(ToolError::InvalidInput(
+                "argv changed after authorization".into(),
+            ));
+        }
+        Ok(self.spec.effect)
+    }
 }
 
 /// Validate a *flat* (non-dispatcher) MCP tool's arguments: coerce the

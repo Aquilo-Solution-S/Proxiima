@@ -23,7 +23,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderValue, Method, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get};
 use proxiima_core::SpiiceServices;
@@ -36,7 +36,7 @@ use crate::mcp::handler::{
     annotations_for_auth, how_to_allowed_for_auth, project_dispatcher_actions_for_auth,
     resource_allowed_for_auth, tool_allowed_for_auth,
 };
-use crate::problem::{NO_STORE, Problem};
+use crate::problem::{NO_STORE, Problem, ProblemStatus};
 use crate::rest::context::{
     RestAuth, RestBody, RestPath, author_from_headers, reject_reserved_arguments,
 };
@@ -560,7 +560,7 @@ fn inject_action(
     };
     if object.contains_key("action") {
         return Err(Problem::new(
-            StatusCode::BAD_REQUEST,
+            ProblemStatus::BAD_REQUEST,
             "action-conflict",
             "Action in request body",
             "`action` is carried by the route on this surface; remove it from the request body",

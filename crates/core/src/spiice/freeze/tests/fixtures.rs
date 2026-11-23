@@ -321,6 +321,7 @@ pub(super) fn register_fixture_tool(
         output_schema: serde_json::json!({ "type": "object" }),
         action_arg_specs,
         argv_action_specs: &[],
+        open_world: false,
         effect,
         audience: crate::catalog::ToolAudience::Shared,
         call,

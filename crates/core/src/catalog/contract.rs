@@ -267,6 +267,7 @@ pub struct ToolCtx {
     services: SpiiceServices,
     engine: Arc<Engine>,
     judged: crate::catalog::JudgedKey,
+    pub(crate) admitted_argv: Option<super::tool::AdmittedArgv>,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -300,6 +301,7 @@ impl ToolCtx {
             services,
             engine,
             judged: crate::catalog::JudgedKey::default(),
+            admitted_argv: None,
         }
         .with_bound_model_id()
     }
@@ -684,6 +686,8 @@ pub trait Tool: Send + Sync + 'static {
     /// its tool-level effect is their join, so a tool-level value would be a
     /// second answer nothing reads.
     const EFFECT: Option<crate::catalog::ToolEffect> = None;
+    /// Whether any operation of this tool can reach outside the deployment.
+    const OPEN_WORLD: bool = false;
     /// The actions this tool dispatches, or `&[]` for a flat tool.
     ///
     /// This is THE enumeration of a dispatcher's action set — the scope
@@ -731,7 +735,7 @@ pub trait Tool: Send + Sync + 'static {
     /// `ignored_fields` array. Never on a tool that writes, and never where a
     /// silently dropped key could change what the call targets: the report is
     /// after the fact. Dispatchers ([`Self::ACTION_ARG_SPECS`],
-    /// [`Self::ARGV_ACTION_SPECS`]) validate per action and ignore this.
+    /// [`Self::ARGV_ACTION_SPECS`]) validate per action and may only declare the strict policy.
     const UNKNOWN_FIELD_POLICY: crate::catalog::UnknownFieldPolicy =
         crate::catalog::UnknownFieldPolicy::Refuse;
     /// Top-level argument keys a *flat* tool accepts beyond its static

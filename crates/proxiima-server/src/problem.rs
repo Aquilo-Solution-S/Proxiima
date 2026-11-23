@@ -14,13 +14,55 @@ use crate::security::PROXIIMA_OWNER_HEADER;
 
 /// Base of every `type` URI. A stable, dereferenceable namespace so a client
 /// can switch on `type` instead of on the human `title`.
-const TYPE_BASE: &str = "https://proxiima.dev/errors/";
+const TYPE_BASE: &str = proxiima_core::ledger!(Proxiima.ToolSurface.problemTypePrefix);
 
 /// Every answer the listener renders is owner-, token- or request-scoped, so
 /// none is shared-cacheable — including `QUERY` reads, whose cacheability is
 /// deliberately unused. What `QUERY` buys here is retry safety and correct
 /// modelling, not caching.
-pub(crate) const NO_STORE: &str = "private, no-store";
+pub(crate) const NO_STORE: &str = proxiima_core::ledger!(Proxiima.ToolSurface.privateCacheControl);
+
+// The status vocabulary used to construct a problem also supplies OpenAPI.
+#[derive(Clone, Copy)]
+pub(crate) struct ProblemStatus(StatusCode);
+
+macro_rules! problem_statuses {
+    ($( $(#[$availability:meta])* $name:ident => $description:literal, )*) => {
+        impl ProblemStatus {
+            $(
+                $(#[$availability])*
+                pub(crate) const $name: Self = Self(StatusCode::$name);
+            )*
+
+            #[cfg(feature = "rest")]
+            pub(crate) const DOCUMENTED: &'static [(StatusCode, &'static str)] =
+                &[$((Self::$name.0, $description)),*];
+        }
+    };
+}
+
+problem_statuses! {
+    BAD_REQUEST => "Invalid input, a reserved call-context argument in the request body, \
+         an unknown schema, a body `action` conflicting with the route, or a \
+         missing or malformed Host header.",
+    UNAUTHORIZED => "Bearer token missing or invalid.",
+    FORBIDDEN => "Not authorized for this tool or action, or a Host, Origin, or owner \
+         selection the listener refuses.",
+    NOT_FOUND => "No such tool, action, resource, or memory, or an unknown or expired \
+         `Mcp-Session-Id`.",
+    #[cfg(feature = "rest")]
+    CONFLICT => "Idempotency conflict, duplicate ingest, trigger conflict, or a \
+         suppressed subject.",
+    #[cfg(feature = "rest")]
+    UNPROCESSABLE_ENTITY => "The write would violate F/A/P layering, or the tool ran and failed \
+         (`tool-failure`, the tool's text as detail).",
+    PAYLOAD_TOO_LARGE => "Request body larger than the listener's limit.",
+    #[cfg(feature = "rest")]
+    INTERNAL_SERVER_ERROR => "Internal error. The detail is deliberately generic.",
+    SERVICE_UNAVAILABLE => "A caller-actionable precondition is unavailable; retry is meaningful.",
+    #[cfg(feature = "rest")]
+    METHOD_NOT_ALLOWED => "This method is unsupported on the route. The Allow header lists the supported methods.",
+}
 
 /// One RFC 9457 problem document plus the response metadata that travels
 /// with it.
@@ -49,14 +91,14 @@ pub struct Problem {
 
 impl Problem {
     pub(crate) fn new(
-        status: StatusCode,
+        status: ProblemStatus,
         slug: &'static str,
         title: &'static str,
         detail: impl Into<String>,
         instance: &str,
     ) -> Self {
         Self {
-            status,
+            status: status.0,
             slug,
             title,
             detail: detail.into(),
@@ -84,7 +126,7 @@ impl Problem {
     pub(crate) fn auth_required(instance: &str) -> Self {
         // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
-            StatusCode::UNAUTHORIZED,
+            ProblemStatus::UNAUTHORIZED,
             "auth-required",
             "Authentication required",
             "send a valid bearer token in the Authorization header",
@@ -95,7 +137,7 @@ impl Problem {
     #[cfg(feature = "rest")]
     pub(crate) fn invalid_input(detail: impl Into<String>, instance: &str) -> Self {
         Self::new(
-            StatusCode::BAD_REQUEST,
+            ProblemStatus::BAD_REQUEST,
             "invalid-input",
             "Invalid input",
             detail,
@@ -106,7 +148,7 @@ impl Problem {
     #[cfg(feature = "rest")]
     pub(crate) fn not_found(detail: impl Into<String>, instance: &str) -> Self {
         Self::new(
-            StatusCode::NOT_FOUND,
+            ProblemStatus::NOT_FOUND,
             "not-found",
             "Not found",
             detail,
@@ -118,7 +160,7 @@ impl Problem {
     /// UTF-8. `detail` names which, never the value.
     pub(crate) fn invalid_host(detail: &'static str, instance: &str) -> Self {
         Self::new(
-            StatusCode::BAD_REQUEST,
+            ProblemStatus::BAD_REQUEST,
             "invalid-host",
             "Invalid Host header",
             detail,
@@ -128,7 +170,7 @@ impl Problem {
 
     pub(crate) fn host_not_allowed(instance: &str) -> Self {
         Self::new(
-            StatusCode::FORBIDDEN,
+            ProblemStatus::FORBIDDEN,
             "host-not-allowed",
             "Host not allowed",
             "this listener does not serve the requested Host; use a host name it is configured for",
@@ -138,7 +180,7 @@ impl Problem {
 
     pub(crate) fn origin_not_allowed(instance: &str) -> Self {
         Self::new(
-            StatusCode::FORBIDDEN,
+            ProblemStatus::FORBIDDEN,
             "origin-not-allowed",
             "Origin not allowed",
             "the request's Origin is not on this listener's allowlist; send at most one allowed Origin",
@@ -148,7 +190,7 @@ impl Problem {
 
     pub(crate) fn invalid_cors_preflight(instance: &str) -> Self {
         Self::new(
-            StatusCode::BAD_REQUEST,
+            ProblemStatus::BAD_REQUEST,
             "invalid-cors-preflight",
             "Invalid CORS preflight",
             "Access-Control-Request-Method must name one method and \
@@ -160,7 +202,7 @@ impl Problem {
     pub(crate) fn owner_selection_refused(instance: &str) -> Self {
         // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
-            StatusCode::FORBIDDEN,
+            ProblemStatus::FORBIDDEN,
             "owner-selection-refused",
             "Owner selection required or invalid",
             format!(
@@ -176,7 +218,7 @@ impl Problem {
     pub(crate) fn session_not_found(instance: &str) -> Self {
         // `Proxiima.Transport.credentialFailureStatus`.
         Self::new(
-            StatusCode::NOT_FOUND,
+            ProblemStatus::NOT_FOUND,
             "session-not-found",
             "Unknown or expired MCP session",
             "the Mcp-Session-Id is unknown or expired; start a new session with initialize",
@@ -186,7 +228,7 @@ impl Problem {
 
     pub(crate) fn session_limit_reached(instance: &str) -> Self {
         Self::new(
-            StatusCode::SERVICE_UNAVAILABLE,
+            ProblemStatus::SERVICE_UNAVAILABLE,
             "session-limit-reached",
             "Session limit reached",
             "the listener holds its maximum number of MCP sessions; retry later",
@@ -198,7 +240,7 @@ impl Problem {
     /// while it streamed past the cap.
     pub(crate) fn body_too_large(instance: &str) -> Self {
         Self::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
+            ProblemStatus::PAYLOAD_TOO_LARGE,
             "body-too-large",
             "Request body too large",
             "the request body exceeds this listener's size limit",
@@ -211,7 +253,7 @@ impl Problem {
     #[cfg(feature = "rest")]
     pub(crate) fn method_not_allowed(method: &axum::http::Method, instance: &str) -> Self {
         Self::new(
-            StatusCode::METHOD_NOT_ALLOWED,
+            ProblemStatus::METHOD_NOT_ALLOWED,
             "method-not-allowed",
             "Method not allowed",
             format!(

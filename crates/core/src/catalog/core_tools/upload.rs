@@ -164,6 +164,7 @@ pub enum CoreUploadOutput {
 
 impl Tool for CoreUploadTool {
     const NAME: &'static str = protocol_tool::CORE_UPLOAD;
+    const OPEN_WORLD: bool = true;
     const TITLE: &'static str = "Uploads";
     const DESCRIPTION: &'static str = "Upload an artefact (document, image, transcript) \
          without sending its bytes through MCP: `prepare` returns a presigned `upload_url` and \

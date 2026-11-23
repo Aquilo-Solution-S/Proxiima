@@ -278,6 +278,7 @@ pub struct SearchMemoryOutput {
 
 impl Tool for SearchMemoriesTool {
     const NAME: &'static str = protocol_tool::CORE_SEARCH_MEMORIES;
+    const OPEN_WORLD: bool = true;
     const TITLE: &'static str = "Search memories";
     const DESCRIPTION: &'static str = "Search memories by text, with kind/schema/tag/time/space filters. Latest versions only unless supersession=all; pages of at most 50. Hybrid score uses weighted RRF (k=60) over fixed candidate windows, comparable within its result list.";
     const EFFECT: Option<ToolEffect> = Some(ToolEffect::ReadOnly);

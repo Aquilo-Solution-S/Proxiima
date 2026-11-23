@@ -1539,8 +1539,9 @@ pub struct ToolContract {
 /// the resource's scope key standing in for a tool name. So resources are
 /// first-class contract entries — and they carry a **typed** `read_only`,
 /// which both gates read through [`Self::declaration`] instead of inferring
-/// a read from a `tool.starts_with("resource:")` string test: a read passes
-/// every palette, and needs read access to the owner.
+/// a read from a `tool.starts_with("resource:")` string test. Declared reads
+/// bypass the deployment command palette. The caller must still hold the
+/// resource key and have read access to the owner.
 ///
 /// Only spiice #0 may declare resources; the registry rejects a non-empty
 /// list from any other ordinal.

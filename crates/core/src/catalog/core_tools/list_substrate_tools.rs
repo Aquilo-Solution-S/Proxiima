@@ -113,7 +113,7 @@ pub(super) fn substrate_tool_actions(
                     .iter()
                     .map(|id| (*id).to_string())
                     .collect(),
-                annotations: ToolAnnotations::registered(effect),
+                annotations: desc.annotations_for_effect(effect),
                 argument_schema: argument_schema.clone(),
                 allowed_fields: spec
                     .into_iter()

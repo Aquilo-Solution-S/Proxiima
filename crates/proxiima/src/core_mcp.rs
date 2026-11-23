@@ -29,7 +29,7 @@ pub struct CoreToolInfo {
     pub output_schema: serde_json::Value,
     /// What the tool does: a flat tool's declaration, a dispatcher's join
     /// over its actions. `Some` for every tool of a frozen registry; its
-    /// MCP hints are [`ToolAnnotations::registered`](proxiima_core::ToolAnnotations::registered).
+    /// MCP hints reflect the tool declaration and the visible effects.
     pub effect: Option<ToolEffect>,
 }
 

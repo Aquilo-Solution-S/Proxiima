@@ -188,6 +188,10 @@ pub enum SpiiceRegistryError {
          declare exactly one"
     )]
     ConflictingActionVocabularies { name: &'static str },
+
+    /// Ignoring unknown arguments is available only to flat read-only tools.
+    #[error("tool {name} may ignore unknown fields only for a flat read")]
+    InvalidUnknownFieldPolicy { name: &'static str },
     /// A tool name, or the name of one of its actions, is no scope key, so no
     /// palette could hold the key the scope gate judges the tool by: an
     /// action outside `[A-Za-z0-9_.-]`, or a dispatcher called `resource`,

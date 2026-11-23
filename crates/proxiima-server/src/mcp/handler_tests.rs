@@ -30,6 +30,7 @@ fn spiice_descriptor(name: &'static str, effect: Option<ToolEffect>) -> ToolDesc
         output_schema: serde_json::json!({"type": "object"}),
         action_arg_specs: &[],
         argv_action_specs: &[],
+        open_world: false,
         effect,
         audience: proxiima_core::catalog::ToolAudience::Shared,
         call: &|_, _| Box::pin(async { Ok(serde_json::json!({})) }),
@@ -1133,10 +1134,10 @@ fn core_tool_effects_encode_expected_semantics() {
             .unwrap_or_else(|| panic!("{name} resolves hints"))
     };
 
-    // Closed substrate: open_world is always false.
+    // Federated search reads across deployments.
     let read = hints(protocol_tool::CORE_SEARCH_MEMORIES);
     assert_eq!(read.read_only, Some(true));
-    assert_eq!(read.open_world, Some(false));
+    assert_eq!(read.open_world, Some(true));
 
     // Convergent additive write (required idempotency key).
     let derive = hints(protocol_tool::CORE_DERIVE);
