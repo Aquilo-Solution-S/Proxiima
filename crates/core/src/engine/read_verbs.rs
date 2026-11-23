@@ -292,6 +292,7 @@ impl Engine {
         authz: &AuthzContext,
         req: &GetGraphReadRequest,
     ) -> Result<GetGraphReadResponse, ProtocolError> {
+        // `Proxiima.Query.permitsReadSurface`.
         let permit = self.authorize_owner_admin(authz, &req.owner).await?;
         get_graph_authorized(&self.storage.read_verb, authz.owner_scope(), permit.owner()).await
     }
@@ -617,8 +618,7 @@ pub(in crate::engine) async fn get_memory_authorized(
     if read_owners.is_empty() {
         return Err(ProtocolError::not_found("memory not found"));
     }
-    // A series read selects the newest readable revision. A version read or pin
-    // keeps its exact admission.
+    // `Proxiima.Query.ReadAt`.
     let memory_id = match req.at {
         ReadAt::Version => req.memory_id,
         ReadAt::SeriesHead => ports

@@ -61,6 +61,7 @@ pub fn cursor_query_mismatch(rebind_hint: &str) -> CursorError {
 /// data structs, so this indicates a programming error, never input.
 #[must_use]
 pub fn encode_token<T: Serialize>(wire: &T) -> String {
+    // `Proxiima.Query.cursorEncoding`.
     let json = serde_json::to_vec(wire).expect("cursor payload serializes");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
 }
@@ -81,7 +82,9 @@ pub fn decode_token<T: DeserializeOwned>(raw: &str) -> Option<T> {
 /// equivalent filters fingerprint identically) and pass the JSON string.
 #[must_use]
 pub fn fingerprint(canon: &str) -> String {
-    blake3::hash(canon.as_bytes()).to_hex()[..16].to_string()
+    blake3::hash(canon.as_bytes()).to_hex()
+        [..crate::ledger!(Proxiima.Query.cursorFingerprintHexChars)]
+        .to_string()
 }
 
 /// The standard fingerprint-bound envelope `{v, fp, c}`.
@@ -129,6 +132,7 @@ impl FingerprintedCursor {
     ) -> Result<C, CursorError> {
         let wire: WireEnvelope<C> =
             decode_token(raw).ok_or_else(|| malformed_cursor(self.source))?;
+        // `Proxiima.Query.cursorChecks`.
         if wire.v != self.version {
             return Err(malformed_cursor(self.source));
         }

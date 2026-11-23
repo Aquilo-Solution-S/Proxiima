@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::error::map_err;
 use crate::pg_enums::PgSketchKind;
 
-pub const SKETCH_CHARS: usize = 160;
+pub const SKETCH_CHARS: usize = proxiima_core::ledger!(Proxiima.Query.sketchChars);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SketchRow {
@@ -80,12 +80,8 @@ pub async fn upsert_sketch(
     Ok(())
 }
 
-/// A sketch row is readable only through its parent: a live memory, or a
-/// goal, with the same `t`. The sketch outlives a forget (a restore needs the
-/// text back), so a read that started from a caller-supplied id must not
-/// return a forgotten memory's sketch. Reading `live_memory`
-/// keeps that true in the lifecycle scope too; owner RLS on `memory` and
-/// `goal` decides what the reader may see at all.
+/// `Proxiima.Query.readableSketch`. The sketch outlives forget so restore can recover its text.
+/// `live_memory` excludes forgotten parents in the lifecycle scope too.
 macro_rules! sketch_parent_readable {
     () => {
         "(EXISTS (SELECT 1 FROM proxiima_core.live_memory m \

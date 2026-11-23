@@ -64,6 +64,7 @@ impl TrimmedLenViolation {
 /// [`TrimmedLenViolation::Blank`] when `value` is empty after trimming,
 /// [`TrimmedLenViolation::TooLong`] when it is longer than `max` characters.
 pub fn check_trimmed_len(value: &str, max: usize) -> Result<&str, TrimmedLenViolation> {
+    // `Proxiima.Query.admitTrimmedText`.
     let value = value.trim();
     if value.is_empty() {
         return Err(TrimmedLenViolation::Blank);
@@ -78,6 +79,32 @@ pub fn check_trimmed_len(value: &str, max: usize) -> Result<&str, TrimmedLenViol
 #[cfg(test)]
 mod tests {
     use super::{TrimmedLenViolation, check_trimmed_len};
+
+    #[test]
+    fn trimmed_text_admission_matches_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/ledger_vectors.json"))
+                .expect("generated ledger vectors");
+        let rows = vectors["Proxiima.Query.admitTrimmedText"]
+            .as_array()
+            .expect("text admission vectors");
+        for row in rows {
+            let value = match row["in"][0].as_str().expect("trimmed length") {
+                "blank" => "  ",
+                "withinBound" => " é ",
+                "oversized" => " éé ",
+                other => panic!("unexpected trimmed length {other}"),
+            };
+            let actual = match check_trimmed_len(value, 1) {
+                Ok("é") => "accept",
+                Ok(text) => panic!("expected the trimmed text, got {text:?}"),
+                Err(TrimmedLenViolation::Blank) => "blank",
+                Err(TrimmedLenViolation::TooLong { max: 1, got: 2 }) => "tooLong",
+                Err(error) => panic!("unexpected length violation {error:?}"),
+            };
+            assert_eq!(actual, row["out"].as_str().expect("text admission"));
+        }
+    }
 
     #[test]
     fn the_two_failures_are_told_apart() {

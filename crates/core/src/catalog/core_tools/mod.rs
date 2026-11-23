@@ -46,13 +46,10 @@ pub use upload::CoreUploadTool;
 
 /// Shared page bounds for the keyset-paginated read surfaces (edges,
 /// goals, citations, membership, lineage).
-pub(crate) const DEFAULT_PAGE_LIMIT: u32 = 50;
-pub(crate) const MAX_PAGE_LIMIT: u32 = 200;
+pub(crate) const DEFAULT_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Query.defaultPageLimit);
+pub(crate) const MAX_PAGE_LIMIT: u32 = crate::ledger!(Proxiima.Query.maxPageLimit);
 
-/// Resolve an optional wire `limit` to `1..=`[`MAX_PAGE_LIMIT`],
-/// defaulting to [`DEFAULT_PAGE_LIMIT`] when omitted and rejecting zero
-/// per [`crate::reject_zero_limit`], which is shared with the spiice tool
-/// trait so both surfaces cannot drift on the same rule.
+/// `Proxiima.Query.pageLimit`.
 pub(crate) fn resolve_page_limit(limit: Option<u32>) -> Result<u32, crate::ToolError> {
     crate::reject_zero_limit(limit)?;
     Ok(limit.unwrap_or(DEFAULT_PAGE_LIMIT).min(MAX_PAGE_LIMIT))
@@ -89,6 +86,33 @@ pub(crate) fn register_all(
 mod page_limit_tests {
     use super::{MAX_PAGE_LIMIT, resolve_page_limit};
     use crate::reject_zero_limit;
+
+    #[test]
+    fn page_limits_match_ledger_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/ledger_vectors.json"))
+                .expect("generated ledger vectors");
+        let rows = vectors["Proxiima.Query.pageLimit"]
+            .as_array()
+            .expect("page vectors");
+        for row in rows {
+            let input = match row["in"][0].as_str().expect("limit input") {
+                "omitted" => None,
+                "zero" => Some(0),
+                "withinBound" => Some(1),
+                "aboveBound" => Some(MAX_PAGE_LIMIT + 1),
+                other => panic!("unexpected limit input {other}"),
+            };
+            let expected = match row["out"].as_str().expect("limit action") {
+                "useDefault" => Some(super::DEFAULT_PAGE_LIMIT),
+                "refuse" => None,
+                "keep" => input,
+                "clamp" => Some(MAX_PAGE_LIMIT),
+                other => panic!("unexpected limit action {other}"),
+            };
+            assert_eq!(resolve_page_limit(input).ok(), expected, "limit {input:?}");
+        }
+    }
 
     #[test]
     fn zero_is_rejected_and_the_upper_bound_is_clamped() {

@@ -16,7 +16,7 @@ use super::get_memory::{GetMemoryOutput, project_memory_snapshot};
 /// `(created_at, memory_id)` keyset under `c`. The fingerprint binds the
 /// cited object.
 const CITATION_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
-    version: 1,
+    version: crate::ledger!(Proxiima.Query.cursorVersion),
     source: "core_fact facts_citing_object response",
     rebind_hint: "repeat the cited_object_id that produced it",
 };

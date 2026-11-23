@@ -9,6 +9,60 @@ fn info(number: u16, name: &str, schemas: &[&str]) -> StoreInfo {
     }
 }
 
+fn query_vectors(rule: &str) -> Vec<serde_json::Value> {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+            .expect("generated ledger vectors");
+    serde_json::from_value(vectors[rule].clone()).expect("store vectors")
+}
+
+#[test]
+fn inventory_admission_matches_ledger_vectors() {
+    for row in query_vectors("Proxiima.Query.acceptsInventory") {
+        let local = row["in"][0].as_bool().expect("includes local");
+        let duplicates = row["in"][1].as_bool().expect("has duplicates");
+        let mut stores = vec![info(5, "remote", &[])];
+        if local {
+            stores.push(info(3, "local", &[]));
+        }
+        if duplicates {
+            stores.push(info(5, "duplicate", &[]));
+        }
+        assert_eq!(
+            StoreInventory::new(3, stores).is_ok(),
+            row["out"].as_bool().expect("admission")
+        );
+    }
+}
+
+#[test]
+fn implicit_store_routing_matches_ledger_vectors() {
+    const SCHEMA: &str = "fixture/note";
+    for row in query_vectors("Proxiima.Query.implicitRoute") {
+        let local = row["in"][0].as_bool().expect("local declaration");
+        let mut remotes = [info(5, "first", &[]), info(7, "second", &[])];
+        let count = match row["in"][1].as_str().expect("remote declarations") {
+            "none" => 0,
+            "one" => 1,
+            "multiple" => 2,
+            other => panic!("unexpected remote declarations {other}"),
+        };
+        for remote in &mut remotes[..count] {
+            remote.schema_ids.push(SCHEMA.to_owned());
+        }
+        let inventory = StoreInventory::new(3, remotes.into()).expect("valid inventory");
+        let route =
+            route_stores(None, Some(SCHEMA), |_| local, &inventory).expect("implicit route");
+        let expected = match row["out"].as_str().expect("store route") {
+            "localOnly" => (true, vec![]),
+            "uniqueRemote" => (false, vec![5]),
+            "allReadable" => (true, vec![5, 7]),
+            other => panic!("unexpected route {other}"),
+        };
+        assert_eq!((route.local, route.remotes), expected);
+    }
+}
+
 #[test]
 fn a_schema_declared_by_one_store_routes_there_only() {
     let stores = StoreInventory::new(
@@ -267,6 +321,35 @@ async fn a_head_read_may_answer_with_another_version_of_the_requested_store_only
         foreign,
         Err(OtherStoresError::MismatchedMemory { .. })
     ));
+}
+
+#[tokio::test]
+async fn remote_version_admission_matches_ledger_vectors() {
+    let owner = crate::UserId::new(Uuid::nil());
+    let authz = AuthzContext::for_subject(owner, crate::AuthPath::System);
+    let caller = StoreCaller {
+        owner: owner.into(),
+        authz: &authz,
+    };
+    let service = OtherStoresService::new(Arc::new(WrongMemoryStore));
+    for row in query_vectors("Proxiima.Query.acceptsRemoteVersion") {
+        let at = match row["in"][0].as_str().expect("read at") {
+            "version" => ReadAt::Version,
+            "seriesHead" => ReadAt::SeriesHead,
+            other => panic!("unexpected version selector {other}"),
+        };
+        let requested = match row["in"][1].as_str().expect("version relation") {
+            "sameVersion" => Uuid::from_u128(2),
+            "otherVersionOfStore" => Uuid::from_u128(1),
+            "otherStore" => crate::new_memory_uuid(1),
+            other => panic!("unexpected version relation {other}"),
+        };
+        let result = service.read_bounded(caller, requested, at).await;
+        assert_eq!(
+            result.is_ok(),
+            row["out"].as_bool().expect("version admission")
+        );
+    }
 }
 
 #[test]

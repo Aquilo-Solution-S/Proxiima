@@ -94,6 +94,8 @@ async fn filter_guided_by_on_connection(
 
 /// The newest version of the series of one memory `read_owners` can read.
 ///
+/// `Causa.readable_head_is_newest`.
+///
 /// # Errors
 /// Returns storage errors from query execution.
 pub(crate) async fn load_series_head_on_connection(

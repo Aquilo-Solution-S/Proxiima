@@ -183,6 +183,7 @@ pub(super) fn project_remote_memory(
         handle: handle.clone(),
         memory: handle,
         series: memory.series.to_string(),
+        // `Proxiima.Query.spaceLabel`.
         space: memory.owner.to_string(),
         owner: memory.owner.into_inner(),
         by: memory.writer.by,
@@ -205,10 +206,7 @@ pub(super) fn project_remote_memory(
 /// `get_memory`, the `proxiima://memories` batch read, and
 /// `facts_citing_object`.
 ///
-/// `space` is the memory's own space: the key of its home owner
-/// (`snapshot.owner`), `current` iff that is the session's owner. It never
-/// depends on which space the caller named, so a follow-up write to the
-/// reported space lands with the memory's owner.
+/// `Proxiima.Query.spaceLabel`.
 pub(super) fn project_memory_snapshot(
     ctx: &ToolCtx,
     snapshot: crate::read_models::MemorySnapshot,

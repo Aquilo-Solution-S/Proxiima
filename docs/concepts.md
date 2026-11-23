@@ -102,6 +102,10 @@ Admission and supersession follow [`Proxiima.Memory`](ledger.md#memory), with id
 Use the [core rustdoc source](https://github.com/Aquilo-Solution-S/proxiima/tree/main/crates/core/src)
 for public types and constructors. Use migrations for table shape.
 
+## Memory reads
+
+Point reads, ordered pages, recall and store routing follow [`Proxiima.Query`](ledger.md#query).
+
 ## Layering
 
 Derivation phases and interpretation subjects follow [`Proxiima.Memory`](ledger.md#memory).

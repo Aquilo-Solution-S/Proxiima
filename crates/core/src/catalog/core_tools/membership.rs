@@ -16,7 +16,7 @@ use crate::{Tool, ToolCtx, ToolError};
 /// Opaque cursor codec: the shared `{v, fp, c}` envelope with the last
 /// `(member, relation)` pair under `c`. The fingerprint binds the group.
 const MEMBER_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
-    version: 1,
+    version: crate::ledger!(Proxiima.Query.cursorVersion),
     source: "core_membership list_members response",
     rebind_hint: "repeat the group that produced it",
 };

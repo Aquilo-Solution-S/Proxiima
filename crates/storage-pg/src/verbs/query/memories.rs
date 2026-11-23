@@ -1,5 +1,4 @@
-//! Query starts at `memory_head`. `HeadsOnly` = current `t` per handle.
-//! `IncludeSuperseded` = every hot `t` of those handles.
+//! Ordered Memory pages.
 
 use std::collections::HashMap;
 
@@ -212,6 +211,7 @@ impl MemoryFilter {
                 specs, tag_match, ..
             } => {
                 let tags_placeholder = (placeholder + specs.len()) as u64;
+                // `Proxiima.Query.matchesTags`.
                 let op = match tag_match {
                     proxiima_core::verbs::query::TagMatch::Any => "&&",
                     proxiima_core::verbs::query::TagMatch::All => "@>",
@@ -342,6 +342,7 @@ fn is_single_memory_stream(req: &QueryRequest) -> bool {
 }
 
 fn page_fetch_limit(req: &QueryRequest) -> u64 {
+    // `Proxiima.Query.memoryPageExtraRows`.
     if is_single_memory_stream(req) {
         u64::from(req.limit) + 1
     } else {
@@ -409,6 +410,7 @@ async fn project_memory_rows_on_connection(
 /// A Goal reference the caller may not read is not a Goal edge for this
 /// response; it stays a plain reference rather than disappearing.
 fn demote_invisible_goal_refs(memories: &mut [(MemoryKind, MemoryRow)], visible_goal_ids: &[Uuid]) {
+    // `Causa.unreadable_goal_reference_resolves_like_a_memory_reference`.
     let visible_goal_set: std::collections::HashSet<Uuid> =
         visible_goal_ids.iter().copied().collect();
     for (_, memory) in memories {
@@ -476,6 +478,7 @@ async fn load_row_payloads_batch_on_connection(
     Ok(result)
 }
 
+/// `Proxiima.Query.includesVersion`.
 fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64) -> SqlText {
     let reference_filter = filters
         .iter()
@@ -504,10 +507,9 @@ fn memory_page_sql(heads_only: bool, filters: &[MemoryFilter], fetch_limit: u64)
     sql
 }
 
+/// `Proxiima.Query.ownerPageStages`.
 /// Top K of the union is contained in the union of each owner's top K.
-/// Owners' primary key deduplicates the requested set. Both RLS checks and
-/// every filter precede the per-owner limit; an invisible or missing memory
-/// never consumes a slot. No limit is applied to heads before that lookup.
+/// The owner primary key deduplicates the requested set.
 fn head_page_sql(filters: &[MemoryFilter], fetch_limit: u64) -> SqlText {
     let mut sql = SqlText::new(
         "SELECT page.* \
@@ -645,6 +647,34 @@ mod tests {
     use crate::sidecars::{PgSidecarRegistryFrozen, core_pg_sidecars};
     use proxiima_core::PgIdent;
     use proxiima_core::{AgentNoteV1, EntityKind, FactPayload, MemoryId, SchemaId, SchemaVersion};
+
+    #[test]
+    fn fetch_limit_matches_ledger_vectors() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../core/tests/ledger_vectors.json"
+        )))
+        .expect("generated ledger vectors");
+        let rows = vectors["Proxiima.Query.memoryPageExtraRows"]
+            .as_array()
+            .expect("fetch vectors");
+        for row in rows {
+            let mut request = super::QueryRequest::readable();
+            request.entity_kind = match row["in"][0].as_str().expect("stream") {
+                "mixed" => None,
+                "fact" => Some(EntityKind::Fact),
+                "abstraction" => Some(EntityKind::Abstraction),
+                "perspective" => Some(EntityKind::Perspective),
+                "goal" => Some(EntityKind::Goal),
+                other => panic!("unexpected query stream {other}"),
+            };
+            let extra = row["out"].as_u64().expect("extra rows");
+            assert_eq!(
+                super::page_fetch_limit(&request),
+                u64::from(request.limit) + extra
+            );
+        }
+    }
 
     /// The tag lookup splices the checked identifiers and nothing else: its
     /// text is the statement the planner has always seen.

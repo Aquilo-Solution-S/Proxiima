@@ -318,6 +318,7 @@ fn validate_query_cursor(req: &QueryRequest) -> Result<(), ProtocolError> {
         return Ok(());
     };
 
+    // `Proxiima.Query.cursorMatchesStream`.
     match req.entity_kind {
         None => Err(ProtocolError::invalid_argument(
             "page.after",
@@ -339,6 +340,7 @@ fn validate_query_cursor(req: &QueryRequest) -> Result<(), ProtocolError> {
 /// A Goal selector filters one stream. Anywhere else the store would ignore
 /// it and return a page wider than the caller asked for.
 fn validate_goal_selectors(req: &QueryRequest) -> Result<(), ProtocolError> {
+    // `Proxiima.Query.acceptsExactFilter`.
     if !req.goal_handles.is_empty() && req.entity_kind != Some(crate::EntityKind::Goal) {
         return Err(ProtocolError::invalid_argument(
             "goal_handles",
@@ -355,6 +357,7 @@ fn validate_goal_selectors(req: &QueryRequest) -> Result<(), ProtocolError> {
 }
 
 fn validate_tag_selector(req: &QueryRequest) -> Result<(), ProtocolError> {
+    // `Proxiima.Query.acceptsExactFilter`.
     if !req.tags.is_empty()
         && !matches!(
             req.entity_kind,
@@ -435,6 +438,102 @@ mod tests {
         let mut req = QueryRequest::readable();
         req.entity_kind = entity_kind;
         req
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    enum Stream {
+        Mixed,
+        Fact,
+        Abstraction,
+        Perspective,
+        Goal,
+    }
+
+    impl Stream {
+        fn kind(self) -> Option<EntityKind> {
+            match self {
+                Self::Mixed => None,
+                Self::Fact => Some(EntityKind::Fact),
+                Self::Abstraction => Some(EntityKind::Abstraction),
+                Self::Perspective => Some(EntityKind::Perspective),
+                Self::Goal => Some(EntityKind::Goal),
+            }
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Vector<T> {
+        #[serde(rename = "in")]
+        input: (T, Stream),
+        out: bool,
+    }
+
+    fn vectors<T: serde::de::DeserializeOwned>(rule: &str) -> Vec<Vector<T>> {
+        let all: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/ledger_vectors.json"))
+                .expect("generated ledger vectors");
+        serde_json::from_value(all[rule].clone()).expect("query vectors")
+    }
+
+    #[test]
+    fn cursor_admission_matches_ledger_vectors() {
+        use super::{QueryCursor, validate_query_cursor};
+
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Kind {
+            Memory,
+            Goal,
+        }
+
+        let id = uuid::Uuid::nil();
+        for row in vectors::<Kind>("Proxiima.Query.cursorMatchesStream") {
+            let (kind, stream) = row.input;
+            let mut req = request(stream.kind());
+            req.page.after = Some(match kind {
+                Kind::Memory => QueryCursor::Memory {
+                    created_at: time::OffsetDateTime::UNIX_EPOCH,
+                    memory_id: crate::MemoryId::new(id),
+                },
+                Kind::Goal => QueryCursor::Goal {
+                    handle: id,
+                    goal_id: crate::GoalId::new(id),
+                },
+            });
+            assert_eq!(validate_query_cursor(&req).is_ok(), row.out);
+        }
+    }
+
+    #[test]
+    fn exact_selector_admission_matches_ledger_vectors() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum Filter {
+            GoalHandles,
+            ReferencedGoalHandles,
+            Tags,
+        }
+
+        for row in vectors::<Filter>("Proxiima.Query.acceptsExactFilter") {
+            let (filter, stream) = row.input;
+            let mut req = request(stream.kind());
+            let result = match filter {
+                Filter::GoalHandles => {
+                    req.goal_handles = vec![uuid::Uuid::nil()];
+                    validate_goal_selectors(&req)
+                }
+                Filter::ReferencedGoalHandles => {
+                    req.referenced_goal_handles = vec![uuid::Uuid::nil()];
+                    validate_goal_selectors(&req)
+                }
+                Filter::Tags => {
+                    req.tags = vec!["rust".into()];
+                    validate_tag_selector(&req)
+                }
+            };
+            assert_eq!(result.is_ok(), row.out);
+        }
     }
 
     #[test]

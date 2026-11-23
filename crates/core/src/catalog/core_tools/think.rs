@@ -184,7 +184,7 @@ async fn think(ctx: ToolCtx, args: ThinkArgs) -> Result<ThinkOutput, ToolError> 
 }
 
 const THINK_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
-    version: 1,
+    version: crate::ledger!(Proxiima.Query.cursorVersion),
     source: "core_think page",
     rebind_hint: "repeat the seed, direction, and depth that produced it",
 };

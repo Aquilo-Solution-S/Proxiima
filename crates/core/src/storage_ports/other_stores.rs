@@ -19,13 +19,15 @@ use crate::{AuthzContext, EdgeKind, OwnerId, SchemaVersion, WriterAttribution};
 
 /// How long a search waits for one other store before reporting it as
 /// unanswered.
-pub const DEFAULT_REMOTE_TIMEOUT: Duration = Duration::from_secs(2);
+pub const DEFAULT_REMOTE_TIMEOUT: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Query.remoteTimeoutSeconds));
 
 /// Maximum time one tool call may spend reading other-store origins.
-pub const DEFAULT_REMOTE_BATCH_DEADLINE: Duration = Duration::from_secs(10);
+pub const DEFAULT_REMOTE_BATCH_DEADLINE: Duration =
+    Duration::from_secs(crate::ledger!(Proxiima.Query.remoteBatchDeadlineSeconds));
 
 /// Maximum number of origin reads in flight for one other store per call.
-pub const MAX_REMOTE_READS_PER_STORE: usize = 8;
+pub const MAX_REMOTE_READS_PER_STORE: usize = crate::ledger!(Proxiima.Query.maxRemoteReadsPerStore);
 
 /// Maximum distinct foreign origins read for one lineage page; remaining
 /// origins render unavailable with an explicit reason.
@@ -74,6 +76,7 @@ impl StoreInventory {
     ///
     /// Refuses a local number or a repeated remote number.
     pub fn new(local_number: u16, remotes: Vec<StoreInfo>) -> Result<Self, OtherStoresError> {
+        // `Proxiima.Query.acceptsInventory`.
         let mut numbers = std::collections::HashSet::with_capacity(remotes.len());
         for info in &remotes {
             if info.number == local_number {
@@ -540,6 +543,7 @@ impl OtherStoresService {
             .await
             .unwrap_or_else(|_| Err(OtherStoresError::Unavailable("timed out".into())))?;
         if let RemoteRead::Found(memory) = &read {
+            // `Proxiima.Query.acceptsRemoteVersion`.
             let answers_the_question = match at {
                 ReadAt::Version => memory.handle == id,
                 ReadAt::SeriesHead => {
@@ -768,6 +772,7 @@ pub fn route_stores(
         }
         return Ok(route);
     }
+    // `Proxiima.Query.implicitRoute`.
     if let Some(schema_id) = schema_id {
         let mut declaring = readable
             .iter()

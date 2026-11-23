@@ -221,11 +221,6 @@ pub(crate) struct SearchStores {
 }
 
 /// Route a search over the stores the caller may read.
-///
-/// When other stores are wired but their list does not answer, a search
-/// that names a remote store fails retryable (`StoreUnavailable` for the
-/// first one named), one that names only this store runs as asked, and
-/// one that names none runs locally and reports `inventory_unanswered`.
 pub(crate) async fn route_search(
     ctx: &ToolCtx,
     requested: Option<&[u16]>,
@@ -243,6 +238,7 @@ pub(crate) async fn route_search(
         None => None,
     };
     let mut inventory_unanswered = false;
+    // `Proxiima.Query.inventoryFallback`.
     if matches!(answered, Some(None)) {
         if let Some(store) = requested
             .into_iter()

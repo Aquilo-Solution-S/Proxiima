@@ -123,6 +123,7 @@ pub async fn list_goals(ctx: ToolCtx, args: ListGoalsArgs) -> Result<ListGoalsOu
         }
         QueryCursor::Memory { .. } => None,
     });
+    // `Causa.has_more_iff_continuation`.
     let has_more = next_cursor.is_some();
     Ok(ListGoalsOutput {
         goals,
@@ -334,7 +335,7 @@ mod tests {
             Err(ToolError::InvalidInput(message)) if message.contains("malformed cursor")
         ));
         let old = wire_cursor::FingerprintedCursor {
-            version: 1,
+            version: crate::ledger!(Proxiima.Query.cursorVersion),
             source: "proxiima://goals page",
             rebind_hint: "repeat the state filter that produced it",
         }

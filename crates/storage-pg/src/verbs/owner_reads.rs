@@ -135,6 +135,8 @@ pub async fn series_versions(
 /// # Errors
 ///
 /// Storage errors from the read or the lock.
+///
+/// `Proxiima.Query.permitsOwnerVersionRead`.
 pub async fn lock_memory_shared(
     tx: &mut Transaction<'_, Postgres>,
     owner: &OwnerId,

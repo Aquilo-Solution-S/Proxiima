@@ -351,6 +351,8 @@ impl Engine {
             .collect())
     }
 
+    /// `Proxiima.Query.permitsReadSurface`.
+    ///
     /// Candidate owners for row reads. Goal candidates only narrow a scan;
     /// the authenticated transaction still checks each exact row. They never
     /// enter the caller's owner roles or the public owner-authority read set.
@@ -472,6 +474,7 @@ impl Engine {
     /// one storage lookup for all of them. Each entry gets its own decision;
     /// the first refused entry is the error and the entries after it are not
     /// decided.
+    /// `Proxiima.Query.entryAuthorization`. The result collector stops at the first refusal.
     pub(in crate::engine) async fn authorize_entry_reads<A>(
         &self,
         authority: &A,

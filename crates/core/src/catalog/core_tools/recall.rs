@@ -19,10 +19,10 @@ use crate::verbs::query::{
 use crate::{Tool, ToolCtx, ToolError};
 use uuid::Uuid;
 
-const DEFAULT_LIMIT: u32 = 16;
-const MAX_LIMIT: u32 = 32;
-const MAX_SUBJECTS: usize = 16;
-const SKETCH_CHARS: usize = 160;
+const DEFAULT_LIMIT: u32 = crate::ledger!(Proxiima.Query.defaultRecallLimit);
+const MAX_LIMIT: u32 = crate::ledger!(Proxiima.Query.maxRecallLimit);
+const MAX_SUBJECTS: usize = crate::ledger!(Proxiima.Query.maxRecallSubjects);
+const SKETCH_CHARS: usize = crate::ledger!(Proxiima.Query.sketchChars);
 
 #[derive(Debug, Default)]
 pub struct RecallTool;
@@ -31,13 +31,13 @@ pub struct RecallTool;
 pub struct RecallArgs {
     #[serde(default)]
     #[schemars(
-        length(max = 512),
+        length(max = crate::catalog::MAX_QUERY_CHARS),
         description = "Question / situation text. Combined with subjects as the cue. At least one of question or subjects is required."
     )]
     pub question: Option<String>,
     #[serde(default)]
     #[schemars(
-        length(max = 16),
+        length(max = MAX_SUBJECTS),
         description = "Memories the situation is about: memory UUIDs."
     )]
     pub subjects: Vec<String>,
@@ -551,6 +551,7 @@ fn truncate_sketch(text: &str) -> String {
 }
 
 fn require_cue(question: Option<&str>, subjects: &[String]) -> Result<(), ToolError> {
+    // `Proxiima.Query.recallHasCue`.
     let question = question.map(str::trim).filter(|q| !q.is_empty());
     if question.is_none() && subjects.is_empty() {
         return Err(ToolError::InvalidInput(
@@ -558,6 +559,30 @@ fn require_cue(question: Option<&str>, subjects: &[String]) -> Result<(), ToolEr
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn recall_cue_admission_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/ledger_vectors.json"))
+            .expect("generated ledger vectors");
+    let rows = vectors["Proxiima.Query.recallHasCue"]
+        .as_array()
+        .expect("cue vectors");
+    for row in rows {
+        let question = row["in"][0].as_bool().expect("question").then_some("why?");
+        let subjects: Vec<String> = row["in"][1]
+            .as_bool()
+            .expect("subjects")
+            .then(|| uuid::Uuid::nil().to_string())
+            .into_iter()
+            .collect();
+        assert_eq!(
+            require_cue(question, &subjects).is_ok(),
+            row["out"].as_bool().expect("cue admission")
+        );
+    }
 }
 
 async fn embed_query(

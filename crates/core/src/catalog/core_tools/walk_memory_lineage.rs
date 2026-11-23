@@ -155,7 +155,7 @@ fn default_limit() -> u32 {
 /// direction, and effective depth; `limit` stays out so it may vary
 /// between pages.
 const LINEAGE_CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
-    version: 1,
+    version: crate::ledger!(Proxiima.Query.cursorVersion),
     source: "proxiima://memory/{id}/lineage page",
     rebind_hint: "repeat the memory, direction, and depth that produced it",
 };
@@ -321,6 +321,7 @@ async fn remote_ancestors(
             let store = crate::memory_store_number(node.handle);
             LineageNodeOutput {
                 memory: node.handle.to_string(),
+                // `Proxiima.Query.spaceLabel`.
                 space: node.owner.map(|owner| owner.to_string()),
                 kind: node.kind,
                 schema_id: node.schema_id,

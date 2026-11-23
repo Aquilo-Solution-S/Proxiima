@@ -552,7 +552,7 @@ pub fn reject_zero_limit(limit: Option<u32>) -> Result<(), ToolError> {
 /// bounds the tsquery the lexical arm builds and the token count the
 /// embedding arm pays for, and a caller who has to remember a different
 /// cap per tool will get it wrong.
-pub const MAX_QUERY_CHARS: usize = 512;
+pub const MAX_QUERY_CHARS: usize = crate::ledger!(Proxiima.Query.maxQueryChars);
 
 /// Longest text cap a caller may ask a search result to carry, in
 /// characters — `core_search_memories`' `body_max_chars` and whatever a
@@ -561,7 +561,7 @@ pub const MAX_QUERY_CHARS: usize = 512;
 /// Shared rather than copied so a spiice's cap cannot drift apart from
 /// core's unnoticed. Defaults are deliberately NOT shared: a short snippet
 /// and an 8,000-character memory body differ because the objects do.
-pub const MAX_TEXT_CAP_CHARS: usize = 8_000;
+pub const MAX_TEXT_CAP_CHARS: usize = crate::ledger!(Proxiima.Query.maxTextCapChars);
 
 /// Trim `value` and check its length against `1..=max` characters,
 /// returning the trimmed text and naming the bound that was actually

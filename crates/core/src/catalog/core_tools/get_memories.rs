@@ -19,7 +19,7 @@ use crate::{ToolCtx, ToolError};
 
 use super::get_memory::{GetMemoryOutput, project_memory_snapshot, project_remote_memory};
 
-pub const MAX_BATCH_GET_MEMORIES: usize = 100;
+pub const MAX_BATCH_GET_MEMORIES: usize = crate::ledger!(Proxiima.Query.maxBatchMemoryIds);
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetMemoriesArgs {
@@ -100,6 +100,7 @@ pub async fn get_memories(
     let mut memories = Vec::with_capacity(requested.len());
     let mut missing = Vec::new();
     let mut unanswered = Vec::new();
+    // `Causa.batch_partition_keeps_order`.
     for (id, raw) in requested {
         if crate::memory_store_number(id.into_inner()) != engine.store_number() {
             match remote.remove(&id) {
@@ -132,8 +133,7 @@ enum RemoteAnswer {
     Unanswered,
 }
 
-/// One bounded remote batch. Not-found, erased and unknown-store ids are
-/// absent (missing); every other failure is [`RemoteAnswer::Unanswered`].
+/// `Proxiima.Query.batchAnswer`.
 async fn read_remote_memories(
     ctx: &ToolCtx,
     requested: &[(MemoryId, &str)],

@@ -137,6 +137,7 @@ fn t_timestamp_sql(t: &'static str) -> SqlText {
 
 /// The columns of a goal row, as [`GoalRowDb`] reads them. `g` is the goal
 /// version and `h` its series head.
+/// `Proxiima.Query.goalTimeSources`.
 fn goal_columns() -> SqlText {
     // `changed_at` comes from this version's `t`. `set_at` comes from the
     // series' first version, the least `t` among its rows.
@@ -196,6 +197,7 @@ fn goal_page_sql(req: &QueryRequest, filters: &[GoalFilter]) -> SqlText {
     append_goal_filters(&mut sql, filters, |filter, next| {
         filter.predicate(next, heads_only)
     });
+    // `Proxiima.Query.goalPageKeys`.
     sql.push(" ORDER BY g.handle DESC, g.t DESC LIMIT ")
         .push_u64(fetch_limit);
     sql
@@ -341,6 +343,7 @@ impl GoalFilter {
                     .push_u64(at)
                     .push("::proxiima_core.goal_state[])");
             }
+            // `Proxiima.Query.matchesMotivation`.
             Self::Unmotivated => {
                 sql.push(" AND g.motivated_by = '{}'::uuid[]");
             }

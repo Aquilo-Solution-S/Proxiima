@@ -1,5 +1,4 @@
-//! Current-memory counts for `proxiima://memories/counts`: the heads, never
-//! the versions.
+//! Current-memory counts for `proxiima://memories/counts`.
 
 use proxiima_core::read_models::MemoryCounts;
 use proxiima_core::{EntityKind, OwnerId, StorageError};
@@ -10,9 +9,7 @@ use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
 use crate::sidecars::int_to_u64;
 
-/// One row per `memory_head` handle, so a stateful series counts once
-/// however many versions it has, and one row per `goal_head` handle in any
-/// state. Joining the live Memory drops a series with only forgotten versions.
+/// `Proxiima.Query.countedVersions`. Joining live Memory omits all-forgotten series.
 ///
 /// `read_owners` is the one owner predicate. The per-kind narrowing is the
 /// owner RLS on `memory_head` and `goal_head` under the caller's bound scope;
@@ -26,6 +23,7 @@ pub(crate) async fn count_memories_on_connection(
         .copied()
         .map(OwnerId::into_inner)
         .collect();
+    // `Proxiima.Query.HeadCounts`. Unseen kinds keep their zero defaults.
     let mut counts = MemoryCounts::default();
 
     let heads: Vec<(PgMemoryKind, i64)> = sqlx::query_as(

@@ -334,6 +334,7 @@ impl Tool for SearchMemoriesTool {
                 output.inventory_unanswered = Some(true);
                 output.unanswered = Some(Vec::new());
             }
+            // `Proxiima.Query.asksRemoteStores`.
             if let Some(service) = stores.service.as_deref()
                 && !stores.route.remotes.is_empty()
                 && args.cursor.is_none()
@@ -1094,10 +1095,8 @@ fn paginate_rank_fused(
     (memories, has_more, next_cursor)
 }
 
-/// Merged cross-space sort with the exact comparator storage pages by:
-/// `(score desc, memory_id desc)` / `(created_at desc, memory_id desc)`.
-/// A cursor built from the last row of this order resumes correctly in
-/// every space at once.
+/// Match the storage comparator so the last row resumes every space at once.
+/// Relevance compares score, then admission ID, both descending.
 fn sort_ranked_outputs(memories: &mut [RankedMemoryOutput], order: SearchOrder) {
     match order {
         SearchOrder::Relevance => memories.sort_by(|a, b| {
@@ -1106,6 +1105,7 @@ fn sort_ranked_outputs(memories: &mut [RankedMemoryOutput], order: SearchOrder) 
                 .total_cmp(&a.output.score)
                 .then_with(|| b.memory_id.cmp(&a.memory_id))
         }),
+        // `Proxiima.Query.searchRecencyKeys`.
         SearchOrder::Recency => memories.sort_by(|a, b| {
             b.created_at
                 .cmp(&a.created_at)
@@ -1151,7 +1151,7 @@ struct RankedListCursor {
 /// gates format evolution.
 const SEARCH_CURSOR: crate::catalog::cursor::FingerprintedCursor =
     crate::catalog::cursor::FingerprintedCursor {
-        version: 1,
+        version: crate::ledger!(Proxiima.Query.cursorVersion),
         source: "core_search_memories response",
         rebind_hint: "repeat the query, mode, filters, order, and spaces that produced it",
     };
@@ -1164,12 +1164,8 @@ fn decode_cursor(raw: &str, fingerprint: &str) -> Result<PageCursor, ToolError> 
     SEARCH_CURSOR.decode(fingerprint, raw).map_err(Into::into)
 }
 
-/// Canonical fingerprint over everything that shapes the result set or
-/// its order. Page size (`limit`) and presentation flags (bodies,
-/// neighbor edges) stay out so they may vary between pages. Tags and
-/// resolved space owners are sorted first, making equivalent filter
-/// sets fingerprint identically. Each Owner carries its scoring lane —
-/// the embedding space its arm searched, or none when it ran lexically.
+/// `Proxiima.Query.cursorBinding`.
+/// Sorting tags and owner lanes makes equivalent filter sets fingerprint identically.
 fn query_fingerprint(
     query: &str,
     args: &SearchMemoriesArgs,

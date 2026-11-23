@@ -86,7 +86,7 @@ pub async fn goal_surroundings(
 }
 
 const CURSOR: wire_cursor::FingerprintedCursor = wire_cursor::FingerprintedCursor {
-    version: 1,
+    version: crate::ledger!(Proxiima.Query.cursorVersion),
     source: "Goal surroundings page",
     rebind_hint: "repeat the Goal and depth that produced it",
 };
