@@ -1300,6 +1300,10 @@ fn replies_with_an_output_schema_match_ledger_vectors() {
     {
         let reply = match row["in"][0].as_str().unwrap() {
             "structured" => ToolReply::Structured(serde_json::json!({})),
+            "structuredWithLinks" => ToolReply::structured_with_links(
+                serde_json::json!({}),
+                vec![proxiima_core::ResourceLink::new("app://x", "x")],
+            ),
             "content" => ToolReply::Content(Vec::new()),
             "failure" => ToolReply::Failure(Vec::new()),
             "structuredFailure" => ToolReply::StructuredFailure {
@@ -1435,4 +1439,263 @@ async fn call_tool_without_bound_auth_is_denied() {
         .expect_err("missing bound owner/auth must deny");
 
     assert!(matches!(err, ToolInvocationError::NotAuthorized(_)));
+}
+
+#[tokio::test]
+async fn structured_with_links_passes_output_schema_and_unwraps_on_json_surface() {
+    use proxiima_core::ResourceLink;
+
+    let payload = serde_json::json!({"id": "w1", "count": 2});
+    let links = vec![
+        ResourceLink::new("app://workspace/w1", "workspace-w1")
+            .with_title("Workspace w1")
+            .with_description("Summary of workspace w1")
+            .with_mime_type("application/json"),
+        ResourceLink::new("proxiima://how-to", "how-to")
+            .with_title("Substrate Guide")
+            .with_mime_type("text/markdown"),
+    ];
+    let (server, _) = scripted(
+        Ok(vec![host_tool("host_linked", READ).with_output_schema(
+            serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "count": {"type": "integer"}},
+                "required": ["id", "count"],
+            }),
+        )]),
+        ToolReply::structured_with_links(payload.clone(), links.clone()),
+    );
+    let auth = owner_auth();
+
+    let reply = server
+        .call_tool_reply_in_request(
+            "host_linked",
+            serde_json::json!({}),
+            author(),
+            Some(auth.clone()),
+            SpiiceServices::default(),
+        )
+        .await
+        .expect("StructuredWithLinks satisfies declared output_schema");
+    assert_eq!(
+        reply,
+        ToolReply::structured_with_links(payload.clone(), links)
+    );
+
+    let json = server
+        .call_tool("host_linked", serde_json::json!({}), author(), Some(auth))
+        .await
+        .expect("JSON-only surface unwraps StructuredWithLinks");
+    assert_eq!(json, payload);
+}
+
+#[tokio::test]
+async fn structured_with_links_rejects_non_object_payload() {
+    let (server, _) = scripted(
+        Ok(vec![host_tool("host_bad_links", READ)]),
+        ToolReply::structured_with_links(serde_json::json!(["not-an-object"]), Vec::new()),
+    );
+    let err = server
+        .call_tool_reply_in_request(
+            "host_bad_links",
+            serde_json::json!({}),
+            author(),
+            Some(owner_auth()),
+            SpiiceServices::default(),
+        )
+        .await
+        .expect_err("non-object structured payload must be refused");
+    assert!(matches!(
+        err,
+        ToolInvocationError::Tool(ToolError::Other(_))
+    ));
+}
+
+#[tokio::test]
+async fn structured_with_links_rejects_malformed_resource_link_uri() {
+    use proxiima_core::ResourceLink;
+
+    for bad_uri in ["app://items/%ZZ", "relative/path", "PROXIIMA://how-to"] {
+        let (server, _) = scripted(
+            Ok(vec![host_tool("host_bad_link", READ)]),
+            ToolReply::structured_with_links(
+                serde_json::json!({"ok": true}),
+                vec![ResourceLink::new(bad_uri, "bad")],
+            ),
+        );
+        let err = server
+            .call_tool_reply_in_request(
+                "host_bad_link",
+                serde_json::json!({}),
+                author(),
+                Some(owner_auth()),
+                SpiiceServices::default(),
+            )
+            .await
+            .expect_err("malformed resource link URI must be refused");
+        assert!(
+            matches!(err, ToolInvocationError::Tool(ToolError::Other(_))),
+            "{bad_uri}: {err:?}"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct FixtureHostResources;
+
+#[async_trait::async_trait]
+impl crate::HostResources for FixtureHostResources {
+    async fn list(&self, _auth: &AuthContext) -> Result<Vec<crate::HostResource>, ToolError> {
+        Ok(vec![
+            crate::HostResource::new("app://catalog", "catalog")
+                .with_title("App Catalog")
+                .with_description("Host catalog index")
+                .with_mime_type("application/json"),
+            // Duplicate URI must be dropped with a warning.
+            crate::HostResource::new("app://catalog", "catalog-dup"),
+            // Reserved proxiima:// scheme must never be served by a host.
+            crate::HostResource::new("proxiima://hijack", "hijack"),
+            // Invalid URI without scheme and malformed percent-encoding must be dropped.
+            crate::HostResource::new("relative/path", "relative"),
+            crate::HostResource::new("app://items/%ZZ", "malformed-percent"),
+        ])
+    }
+
+    async fn list_templates(
+        &self,
+        _auth: &AuthContext,
+    ) -> Result<Vec<crate::HostResourceTemplate>, ToolError> {
+        Ok(vec![
+            crate::HostResourceTemplate::new("app://item/{id}", "item")
+                .with_title("App Item")
+                .with_mime_type("application/json"),
+            crate::HostResourceTemplate::new("app://item/{id}", "item-dup"),
+            crate::HostResourceTemplate::new("PROXIIMA://memory/{id}", "hijack-template"),
+        ])
+    }
+
+    async fn read(
+        &self,
+        uri: &str,
+        ctx: ToolCtx,
+    ) -> Result<Option<Vec<crate::HostResourceContent>>, ToolError> {
+        match uri {
+            "app://catalog" => Ok(Some(vec![
+                crate::HostResourceContent::json(
+                    uri,
+                    &serde_json::json!({"owner": ctx.owner().to_string()}),
+                )
+                .unwrap(),
+            ])),
+            "app://missing" => Err(ToolError::NotFound("no such item".into())),
+            "app://spoof-text" => Ok(Some(vec![crate::HostResourceContent::text(
+                "proxiima://how-to",
+                "forged substrate text",
+            )])),
+            "app://spoof-blob" => Ok(Some(vec![crate::HostResourceContent::blob(
+                "PROXIIMA://memory/123",
+                [0xde, 0xad],
+            )])),
+            "app://spoof-invalid" => Ok(Some(vec![crate::HostResourceContent::text(
+                "relative/path",
+                "bad uri",
+            )])),
+            "app://spoof-malformed-suffix" => Ok(Some(vec![crate::HostResourceContent::text(
+                "app://items/%ZZ",
+                "bad percent encoding",
+            )])),
+            "app://spoof-malformed-blob" => Ok(Some(vec![crate::HostResourceContent::blob(
+                "app://items/%ZZ",
+                [0x01, 0x02],
+            )])),
+            _ => Ok(None),
+        }
+    }
+}
+
+#[tokio::test]
+async fn host_resources_filter_reserved_and_duplicates_and_enforce_auth() {
+    let server = make_server().with_host_resources(Arc::new(FixtureHostResources));
+    let auth = owner_auth();
+
+    let resources = server.host_resources_for(&auth).await.unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].uri, "app://catalog");
+
+    let templates = server.host_resource_templates_for(&auth).await.unwrap();
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].uri_template, "app://item/{id}");
+
+    // Reserved proxiima:// URIs never dispatch to HostResources.
+    assert_eq!(
+        server
+            .read_host_resource("proxiima://hijack", author(), Some(auth.clone()))
+            .await
+            .unwrap(),
+        None
+    );
+
+    // Unauthenticated reads are denied.
+    let unauth = server
+        .read_host_resource("app://catalog", author(), None)
+        .await
+        .expect_err("unauthenticated host resource read must deny");
+    assert!(matches!(unauth, ToolInvocationError::NotAuthorized(_)));
+
+    // NUL bytes in URI are rejected as InvalidInput.
+    let nul = server
+        .read_host_resource("app://bad\0uri", author(), Some(auth.clone()))
+        .await
+        .expect_err("NUL byte must be rejected");
+    assert!(matches!(
+        nul,
+        ToolInvocationError::Tool(ToolError::InvalidInput(_))
+    ));
+
+    // Authenticated read receives the bound owner in ToolCtx.
+    let read = server
+        .read_host_resource("app://catalog", author(), Some(auth.clone()))
+        .await
+        .unwrap()
+        .expect("matched host resource");
+    assert_eq!(
+        read,
+        vec![
+            crate::HostResourceContent::json(
+                "app://catalog",
+                &serde_json::json!({"owner": auth.owner.to_string()}),
+            )
+            .unwrap()
+        ]
+    );
+
+    // Malformed inbound concrete URI (valid scheme, invalid percent-encoding)
+    // never dispatches to HostResources.
+    assert_eq!(
+        server
+            .read_host_resource("app://items/%ZZ", author(), Some(auth.clone()))
+            .await
+            .unwrap(),
+        None
+    );
+
+    // Outbound content entries claiming proxiima:// (any case) or an invalid
+    // RFC 3986 URI (including a valid scheme with malformed suffix) are
+    // rejected at the ToolHost boundary for both text and blob.
+    for uri in [
+        "app://spoof-text",
+        "app://spoof-blob",
+        "app://spoof-invalid",
+        "app://spoof-malformed-suffix",
+        "app://spoof-malformed-blob",
+    ] {
+        let err = server
+            .read_host_resource(uri, author(), Some(auth.clone()))
+            .await
+            .expect_err("reserved or invalid content URI must be refused");
+        assert!(
+            matches!(err, ToolInvocationError::Tool(ToolError::Other(_))),
+            "{uri}: {err:?}"
+        );
+    }
 }

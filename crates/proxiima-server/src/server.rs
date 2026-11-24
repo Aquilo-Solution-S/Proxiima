@@ -25,6 +25,11 @@ use proxiima_core::{
 use serde::Serialize;
 
 use crate::auth::AuthContext;
+use crate::host_resources::{
+    HostResource, HostResourceContent, HostResourceTemplate, HostResources, ResourceSchemeClass,
+    classify_concrete_resource_uri, host_resource_refusal, host_resource_template_refusal,
+    resource_link_refusal,
+};
 use crate::host_tools::{HostTool, HostTools};
 use crate::mcp::tool_list::ToolListNotifier;
 use crate::request_scope::RequestHeaderAllowlist;
@@ -35,6 +40,7 @@ pub struct ToolHost {
     engine: Arc<Engine>,
     request_headers: RequestHeaderAllowlist,
     host_tools: Option<Arc<dyn HostTools>>,
+    host_resources: Option<Arc<dyn HostResources>>,
     tool_list: Option<ToolListNotifier>,
 }
 
@@ -46,6 +52,7 @@ impl std::fmt::Debug for ToolHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolHost")
             .field("host_tools", &self.host_tools)
+            .field("host_resources", &self.host_resources)
             .field("tool_list_notifications", &self.tool_list.is_some())
             .finish_non_exhaustive()
     }
@@ -60,6 +67,7 @@ impl ToolHost {
             engine,
             request_headers: RequestHeaderAllowlist::default(),
             host_tools: None,
+            host_resources: None,
             tool_list: None,
         }
     }
@@ -68,6 +76,14 @@ impl ToolHost {
     #[must_use]
     pub fn with_host_tools(mut self, tools: Arc<dyn HostTools>) -> Self {
         self.host_tools = Some(tools);
+        self
+    }
+
+    /// Serve `resources` beside Proxiima's `proxiima://` resources (see
+    /// [`HostResources`]).
+    #[must_use]
+    pub fn with_host_resources(mut self, resources: Arc<dyn HostResources>) -> Self {
+        self.host_resources = Some(resources);
         self
     }
 
@@ -123,6 +139,78 @@ impl ToolHost {
     /// ([`HostTools::instructions`]); `None` without a host source.
     pub(crate) async fn host_instructions(&self, auth: &AuthContext) -> Option<String> {
         self.host_tools.as_ref()?.instructions(auth).await
+    }
+
+    /// The static host resources `auth` may be shown: [`HostResources::list`]
+    /// minus invalid, reserved (`proxiima://`), or duplicate URIs.
+    ///
+    /// # Errors
+    ///
+    /// The source's [`ToolError`], unchanged; no host resource source means an
+    /// empty list.
+    pub async fn host_resources_for(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<Vec<HostResource>, ToolError> {
+        let Some(source) = &self.host_resources else {
+            return Ok(Vec::new());
+        };
+        let mut served: Vec<HostResource> = Vec::new();
+        for resource in source.list(auth).await? {
+            if let Some(reason) = host_resource_refusal(&resource.uri, &resource.name) {
+                tracing::warn!(uri = %resource.uri, reason, "host resource not served");
+            } else if served.iter().any(|existing| existing.uri == resource.uri) {
+                tracing::warn!(
+                    uri = %resource.uri,
+                    reason = "the host listed this resource URI twice",
+                    "host resource not served"
+                );
+            } else {
+                served.push(resource);
+            }
+        }
+        Ok(served)
+    }
+
+    /// The host resource templates `auth` may be shown:
+    /// [`HostResources::list_templates`] minus invalid, reserved
+    /// (`proxiima://`), or duplicate templates.
+    ///
+    /// # Errors
+    ///
+    /// The source's [`ToolError`], unchanged; no host resource source means an
+    /// empty list.
+    pub async fn host_resource_templates_for(
+        &self,
+        auth: &AuthContext,
+    ) -> Result<Vec<HostResourceTemplate>, ToolError> {
+        let Some(source) = &self.host_resources else {
+            return Ok(Vec::new());
+        };
+        let mut served: Vec<HostResourceTemplate> = Vec::new();
+        for template in source.list_templates(auth).await? {
+            if let Some(reason) =
+                host_resource_template_refusal(&template.uri_template, &template.name)
+            {
+                tracing::warn!(
+                    uri_template = %template.uri_template,
+                    reason,
+                    "host resource template not served"
+                );
+            } else if served
+                .iter()
+                .any(|existing| existing.uri_template == template.uri_template)
+            {
+                tracing::warn!(
+                    uri_template = %template.uri_template,
+                    reason = "the host listed this resource template twice",
+                    "host resource template not served"
+                );
+            } else {
+                served.push(template);
+            }
+        }
+        Ok(served)
     }
 
     /// Copy the allowlisted inbound headers of each served call into its
@@ -481,6 +569,77 @@ impl ToolHost {
         Ok(json_reply(scope_key, reply)?)
     }
 
+    /// Read one host-served non-`proxiima://` resource URI
+    /// ([`HostResources::read`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolInvocationError::NotAuthorized`] without an authenticated
+    /// caller, [`ToolError::InvalidInput`] for a NUL byte in `uri`,
+    /// [`ToolError::Other`] when any returned content entry carries a reserved
+    /// (`proxiima://`) or invalid URI, or the host source's [`ToolError`].
+    pub async fn read_host_resource(
+        &self,
+        uri: &str,
+        caller: ToolCaller,
+        auth: Option<AuthContext>,
+    ) -> Result<Option<Vec<HostResourceContent>>, ToolInvocationError> {
+        self.read_host_resource_in_request(uri, caller, auth, SpiiceServices::default())
+            .await
+    }
+
+    /// [`Self::read_host_resource`] with a per-request service set merged onto
+    /// the boot set.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_host_resource`] and [`Self::ctx_for_request`].
+    pub async fn read_host_resource_in_request(
+        &self,
+        uri: &str,
+        caller: ToolCaller,
+        auth: Option<AuthContext>,
+        request: SpiiceServices,
+    ) -> Result<Option<Vec<HostResourceContent>>, ToolInvocationError> {
+        if uri.contains('\0') {
+            return Err(ToolError::InvalidInput(
+                "resource URI must not contain NUL (U+0000)".to_string(),
+            )
+            .into());
+        }
+        let Some(source) = &self.host_resources else {
+            return Ok(None);
+        };
+        // `Proxiima.ToolSurface.hostResourceSchemeAdmitted`.
+        if classify_concrete_resource_uri(uri) != ResourceSchemeClass::HostDefined {
+            return Ok(None);
+        }
+        let auth = auth.ok_or_else(|| ToolInvocationError::NotAuthorized(uri.to_owned()))?;
+        let ctx = self.ctx_for_request(caller, &auth, request)?;
+        let Some(contents) = source
+            .read(uri, ctx)
+            .await
+            .map_err(ToolInvocationError::from)?
+        else {
+            return Ok(None);
+        };
+        for entry in &contents {
+            if classify_concrete_resource_uri(entry.uri()) != ResourceSchemeClass::HostDefined {
+                tracing::error!(
+                    requested_uri = %uri,
+                    content_uri = %entry.uri(),
+                    "host resource content URI must be a valid non-proxiima:// RFC 3986 URI"
+                );
+                return Err(ToolError::Other(
+                    "host resource content URI must be a valid non-proxiima:// RFC 3986 URI"
+                        .to_owned(),
+                )
+                .into());
+            }
+        }
+        Ok(Some(contents))
+    }
+
     /// Run `terminal` inside the registry's `RequestBehavior` onion (scope
     /// gate first), as `call_tool` and `read_resource` do. `name` is the
     /// scope key the gate judges; `ctx` comes from [`Self::ctx_for_request`].
@@ -541,7 +700,10 @@ fn checked_reply(
 ) -> Result<ToolReply, ToolError> {
     // `Proxiima.ToolSurface.replyWithOutputSchema`.
     match &reply {
-        ToolReply::Structured(output) if !output.is_object() => {
+        ToolReply::Structured(output)
+        | ToolReply::StructuredWithLinks {
+            structured: output, ..
+        } if !output.is_object() => {
             tracing::error!(tool = %tool, "tool output after request behaviors must be a JSON object");
             Err(ToolError::Other("tool output must be a JSON object".into()))
         }
@@ -561,6 +723,20 @@ fn checked_reply(
         | ToolReply::Content(_)
         | ToolReply::Failure(_)
         | ToolReply::StructuredFailure { .. } => Ok(reply),
+        ToolReply::StructuredWithLinks { links, .. } => {
+            for link in links {
+                if let Some(reason) = resource_link_refusal(&link.uri, &link.name) {
+                    tracing::error!(
+                        tool = %tool,
+                        uri = %link.uri,
+                        reason,
+                        "tool reply resource link is invalid"
+                    );
+                    return Err(ToolError::Other(reason.to_owned()));
+                }
+            }
+            Ok(reply)
+        }
     }
 }
 

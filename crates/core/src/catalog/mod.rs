@@ -43,7 +43,7 @@ pub use manifest::{
     canonical_scope_keys_excluding, canonical_served_read_keys, core_action_meta,
     how_to_resource_declaration, how_to_resource_key,
 };
-pub use reply::{ToolContent, ToolReply};
+pub use reply::{ResourceLink, ToolContent, ToolReply};
 pub use schema::{
     ActionSchema, DispatcherSchema, mcp_wire_output_schema, normalize_mcp_output_schema,
 };

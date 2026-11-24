@@ -420,16 +420,19 @@ pub use proxiima_core::catalog::{
 /// The request-behavior onion. A behavior wraps [`ToolCtx`] /
 /// [`ToolError`]; spiices register one through `proxiima::spiice`.
 pub use proxiima_core::catalog::{Next, RequestBehavior, ToolCall};
+/// What a tool call answers ([`ToolReply`] of [`ToolContent`] blocks and
+/// [`ResourceLink`] follow-ups, which [`HostTools::call`] returns and every
+/// behavior passes on) and the borrowed view of one tool a behavior's
+/// [`RequestBehavior::visible`] reads.
+pub use proxiima_core::catalog::{
+    ResourceLink, ToolContent, ToolDescriptorView, ToolReply, ToolSource,
+};
 /// The host-built behavior chain: [`Next::new`] and
 /// [`ToolHost::dispatch_through_behaviors`] take a [`TerminalDispatch`],
 /// and [`ScopeGateBehavior`] is the tool-scope gate a host that assembles its
 /// own chain names. Host API only; spiices register behaviors, they do not
 /// build the chain.
 pub use proxiima_core::catalog::{ScopeGateBehavior, TerminalDispatch};
-/// What a tool call answers ([`ToolReply`] of [`ToolContent`] blocks, which
-/// [`HostTools::call`] returns and every behavior passes on) and the
-/// borrowed view of one tool a behavior's [`RequestBehavior::visible`] reads.
-pub use proxiima_core::catalog::{ToolContent, ToolDescriptorView, ToolReply, ToolSource};
 /// Host-bound `CloudEvents` extension attributes
 /// ([`AuthzContext::with_publication_extensions`]); the error and value
 /// types are what binding returns and `get` reads.
@@ -602,8 +605,9 @@ pub use proxiima_server::{
 /// MCP edge wiring [`layered_router`] takes, and the listener CORS layer.
 pub use proxiima_server::{EdgeAuth, OriginAllowlist, cors_layer};
 pub use proxiima_server::{
-    HostTool, HostTools, MAX_HOST_INSTRUCTIONS_CHARS, McpStreamableService, ToolHost,
-    ToolListNotifier, auth_context, mcp_tool_error_to_error_data,
+    HostResource, HostResourceContent, HostResourceTemplate, HostResources, HostTool, HostTools,
+    MAX_HOST_INSTRUCTIONS_CHARS, McpStreamableService, ToolHost, ToolListNotifier, auth_context,
+    mcp_tool_error_to_error_data,
 };
 /// One scope in [`ResourceServerMetadata::additional_scopes`], and why
 /// [`ScopeToken::parse`] refused one.

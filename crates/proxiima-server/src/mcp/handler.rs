@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use proxiima_core::catalog::{
-    ToolAnnotations, ToolContent, ToolDescriptor, ToolDescriptorView, ToolEffect, ToolErrorKind,
-    ToolReply, all_core_resources, mcp_wire_output_schema, normalize_mcp_output_schema,
-    provider_safe_tool_name, tool_name_matches,
+    ResourceLink, ToolAnnotations, ToolContent, ToolDescriptor, ToolDescriptorView, ToolEffect,
+    ToolErrorKind, ToolReply, all_core_resources, mcp_wire_output_schema,
+    normalize_mcp_output_schema, provider_safe_tool_name, tool_name_matches,
 };
 use proxiima_core::{
     MemoryId, SpiiceRegistryFrozen, UNKNOWN_OPERATOR_LABEL, resolve_operator_label,
@@ -49,6 +49,10 @@ const LIST_TTL_MS: u64 = proxiima_core::ledger!(Proxiima.Transport.listTtlMillis
 const LIST_CACHE_SCOPE: CacheScope = CacheScope::Private;
 
 use crate::auth::AuthContext;
+use crate::host_resources::{
+    HostResource, HostResourceBody, HostResourceContent, HostResourceTemplate,
+    is_reserved_resource_uri, resource_link_refusal,
+};
 use crate::host_tools::HostTool;
 use crate::server::{ToolHost, ToolInvocationError};
 use proxiima_core::{CapabilitySet, KeyDeclaration, OwnerAccess, ResourceKey, ScopeKey, ToolName};
@@ -317,24 +321,34 @@ impl ServerHandler for DynamicHandler {
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + MaybeSendFuture + '_ {
         let auth = auth_context(&context);
-        let resource = Resource::new(selfdoc::HOW_TO_URI, selfdoc::HOW_TO_NAME)
-            .with_title(selfdoc::HOW_TO_TITLE)
-            .with_description(selfdoc::HOW_TO_DESCRIPTION)
-            .with_mime_type(selfdoc::HOW_TO_MIME);
-        let mut resources = Vec::new();
-        if how_to_allowed_for_auth(auth.as_ref()) {
-            resources.push(resource);
+        let server = self.server.clone();
+        async move {
+            let resource = Resource::new(selfdoc::HOW_TO_URI, selfdoc::HOW_TO_NAME)
+                .with_title(selfdoc::HOW_TO_TITLE)
+                .with_description(selfdoc::HOW_TO_DESCRIPTION)
+                .with_mime_type(selfdoc::HOW_TO_MIME);
+            let mut resources = Vec::new();
+            if how_to_allowed_for_auth(auth.as_ref()) {
+                resources.push(resource);
+            }
+            resources.extend(
+                all_core_resources()
+                    .filter(|resource| {
+                        !resource.is_template && resource_allowed_for_auth(auth.as_ref(), resource)
+                    })
+                    .map(raw_resource_from_meta),
+            );
+            if let Some(auth) = &auth {
+                let host_resources = server
+                    .host_resources_for(auth)
+                    .await
+                    .map_err(|err| mcp_tool_error_to_error_data(&err))?;
+                resources.extend(host_resources.into_iter().map(host_resource_entry));
+            }
+            Ok(ListResourcesResult::with_all_items(resources)
+                .with_ttl_ms(LIST_TTL_MS)
+                .with_cache_scope(LIST_CACHE_SCOPE))
         }
-        resources.extend(
-            all_core_resources()
-                .filter(|resource| {
-                    !resource.is_template && resource_allowed_for_auth(auth.as_ref(), resource)
-                })
-                .map(raw_resource_from_meta),
-        );
-        std::future::ready(Ok(ListResourcesResult::with_all_items(resources)
-            .with_ttl_ms(LIST_TTL_MS)
-            .with_cache_scope(LIST_CACHE_SCOPE)))
     }
 
     fn list_resource_templates(
@@ -344,17 +358,28 @@ impl ServerHandler for DynamicHandler {
     ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + MaybeSendFuture + '_
     {
         let auth = auth_context(&context);
-        let resource_templates = all_core_resources()
-            .filter(|resource| {
-                resource.is_template && resource_allowed_for_auth(auth.as_ref(), resource)
-            })
-            .map(raw_resource_template_from_meta)
-            .collect();
-        std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(
-            resource_templates,
-        )
-        .with_ttl_ms(LIST_TTL_MS)
-        .with_cache_scope(LIST_CACHE_SCOPE)))
+        let server = self.server.clone();
+        async move {
+            let mut resource_templates: Vec<ResourceTemplate> = all_core_resources()
+                .filter(|resource| {
+                    resource.is_template && resource_allowed_for_auth(auth.as_ref(), resource)
+                })
+                .map(raw_resource_template_from_meta)
+                .collect();
+            if let Some(auth) = &auth {
+                let host_templates = server
+                    .host_resource_templates_for(auth)
+                    .await
+                    .map_err(|err| mcp_tool_error_to_error_data(&err))?;
+                resource_templates
+                    .extend(host_templates.into_iter().map(host_resource_template_entry));
+            }
+            Ok(
+                ListResourceTemplatesResult::with_all_items(resource_templates)
+                    .with_ttl_ms(LIST_TTL_MS)
+                    .with_cache_scope(LIST_CACHE_SCOPE),
+            )
+        }
     }
 
     /// Answers are always [`ReadResourceResponse::Complete`]. rmcp 3 widened
@@ -398,22 +423,43 @@ impl ServerHandler for DynamicHandler {
                 ])
                 .into());
             }
-            if !uri.starts_with("proxiima://") {
+            if is_reserved_resource_uri(&uri) {
+                if !uri.starts_with("proxiima://") {
+                    return Err(ErrorData::resource_not_found(
+                        format!("unknown resource {uri}"),
+                        None,
+                    ));
+                }
+                let author = author_from_ctx(auth.as_ref(), &client_name, &client_version);
+                let request = request_services?;
+                let value = server
+                    .read_resource_in_request(&uri, author, auth, request)
+                    .await
+                    .map_err(resource_invocation_error_to_error_data)?;
+                let text = serde_json::to_string(&value).map_err(generic_internal_error)?;
+                return Ok(ReadResourceResult::new(vec![
+                    ResourceContents::text(text, uri).with_mime_type("application/json"),
+                ])
+                .into());
+            }
+            let author = author_from_ctx(auth.as_ref(), &client_name, &client_version);
+            let request = request_services?;
+            let Some(contents) = server
+                .read_host_resource_in_request(&uri, author, auth, request)
+                .await
+                .map_err(resource_invocation_error_to_error_data)?
+            else {
                 return Err(ErrorData::resource_not_found(
                     format!("unknown resource {uri}"),
                     None,
                 ));
-            }
-            let author = author_from_ctx(auth.as_ref(), &client_name, &client_version);
-            let request = request_services?;
-            let value = server
-                .read_resource_in_request(&uri, author, auth, request)
-                .await
-                .map_err(resource_invocation_error_to_error_data)?;
-            let text = serde_json::to_string(&value).map_err(generic_internal_error)?;
-            Ok(ReadResourceResult::new(vec![
-                ResourceContents::text(text, uri).with_mime_type("application/json"),
-            ])
+            };
+            Ok(ReadResourceResult::new(
+                contents
+                    .into_iter()
+                    .map(host_resource_content_block)
+                    .collect(),
+            )
             .into())
         }
     }
@@ -765,6 +811,17 @@ fn wire_reply(tool: &str, reply: ToolReply) -> Result<CallToolResult, ErrorData>
             result.structured_content = Some(output);
             Ok(result)
         }
+        ToolReply::StructuredWithLinks { structured, links } => {
+            let (output, text) = structured_tool_output(tool, structured)?;
+            let mut blocks = Vec::with_capacity(1 + links.len());
+            blocks.push(ContentBlock::text(text));
+            for link in links {
+                blocks.push(resource_link_block(tool, link)?);
+            }
+            let mut result = CallToolResult::success(blocks);
+            result.structured_content = Some(output);
+            Ok(result)
+        }
         ToolReply::Content(content) => {
             let blocks: Vec<ContentBlock> = content.into_iter().map(content_block).collect();
             Ok(CallToolResult::success(blocks))
@@ -780,6 +837,64 @@ fn wire_reply(tool: &str, reply: ToolReply) -> Result<CallToolResult, ErrorData>
                 CallToolResult::error(content.into_iter().map(content_block).collect());
             result.structured_content = Some(serde_json::Value::Object(structured));
             Ok(result)
+        }
+    }
+}
+
+fn resource_link_block(tool: &str, link: ResourceLink) -> Result<ContentBlock, ErrorData> {
+    if let Some(reason) = resource_link_refusal(&link.uri, &link.name) {
+        tracing::error!(tool = %tool, uri = %link.uri, reason, "mcp resource link is invalid");
+        return Err(ErrorData::internal_error("internal server error", None));
+    }
+    let mut resource = Resource::new(link.uri, link.name);
+    if let Some(title) = link.title {
+        resource = resource.with_title(title);
+    }
+    if let Some(description) = link.description {
+        resource = resource.with_description(description);
+    }
+    if let Some(mime_type) = link.mime_type {
+        resource = resource.with_mime_type(mime_type);
+    }
+    Ok(ContentBlock::resource_link(resource))
+}
+
+fn host_resource_entry(resource: HostResource) -> Resource {
+    let mut entry = Resource::new(resource.uri, resource.name);
+    if let Some(title) = resource.title {
+        entry = entry.with_title(title);
+    }
+    if let Some(description) = resource.description {
+        entry = entry.with_description(description);
+    }
+    if let Some(mime_type) = resource.mime_type {
+        entry = entry.with_mime_type(mime_type);
+    }
+    entry
+}
+
+fn host_resource_template_entry(template: HostResourceTemplate) -> ResourceTemplate {
+    let mut entry = ResourceTemplate::new(template.uri_template, template.name);
+    if let Some(title) = template.title {
+        entry = entry.with_title(title);
+    }
+    if let Some(description) = template.description {
+        entry = entry.with_description(description);
+    }
+    if let Some(mime_type) = template.mime_type {
+        entry = entry.with_mime_type(mime_type);
+    }
+    entry
+}
+
+fn host_resource_content_block(content: HostResourceContent) -> ResourceContents {
+    let (uri, mime_type, body) = content.into_parts();
+    match body {
+        HostResourceBody::Text(text) => {
+            with_mime_type(ResourceContents::text(text, uri), mime_type)
+        }
+        HostResourceBody::Blob(blob) => {
+            with_mime_type(ResourceContents::blob(blob, uri), mime_type)
         }
     }
 }

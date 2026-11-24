@@ -8,6 +8,7 @@
 
 mod auth;
 mod error;
+mod host_resources;
 mod host_tools;
 mod mcp;
 pub mod oauth;
@@ -21,6 +22,7 @@ mod server;
 
 pub use auth::{AuthContext, EdgeAuth};
 pub use error::ServerError;
+pub use host_resources::{HostResource, HostResourceContent, HostResourceTemplate, HostResources};
 pub use host_tools::{HostTool, HostTools, MAX_HOST_INSTRUCTIONS_CHARS};
 pub use mcp::handler::{
     DynamicHandler, auth_context, author_from_args, mcp_tool_error_to_error_data,

@@ -245,7 +245,9 @@ typed tool returns `ToolError::Failure(text)`; a host tool answers
 `ToolReply::Failure` or `ToolReply::StructuredFailure`. Proxiima neither
 redacts nor rewords that text. Every other `ToolError` stays a JSON-RPC error.
 REST answers a tool failure as `422` with type `tool-failure` and the text as
-`detail`.
+`detail`. A successful tool that returns a compact summary alongside follow-up
+MCP `resource_link` blocks answers `ToolReply::StructuredWithLinks`; JSON-only
+surfaces unwrap its structured object.
 
 REST returns `application/problem+json`: machine-readable `type`, `title`,
 `status`, safe `detail`, and request `instance`. Its exhaustive variant map is

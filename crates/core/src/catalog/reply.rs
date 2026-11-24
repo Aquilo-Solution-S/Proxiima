@@ -65,6 +65,52 @@ impl ToolContent {
     }
 }
 
+/// A `resource_link` follow-up reference attached to a structured tool reply
+/// ([`ToolReply::StructuredWithLinks`]).
+///
+/// Built with [`Self::new`] and the `with_*` setters; the struct is
+/// `#[non_exhaustive]`, so a field added later does not break callers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResourceLink {
+    pub uri: String,
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub mime_type: Option<String>,
+}
+
+impl ResourceLink {
+    #[must_use]
+    pub fn new(uri: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            name: name.into(),
+            title: None,
+            description: None,
+            mime_type: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+}
+
 /// The answer of one tool call.
 ///
 /// A tool that ran answers with a variant; a call that could not run (the
@@ -98,6 +144,13 @@ pub enum ToolReply {
     /// that only post-processes JSON matches this variant and passes the
     /// others on.
     Structured(serde_json::Value),
+    /// A JSON object sent as `structuredContent` plus its text rendering and
+    /// trailing `resource_link` blocks for follow-up reads. Allowed on tools
+    /// that declare an output schema; JSON-only surfaces unwrap `structured`.
+    StructuredWithLinks {
+        structured: serde_json::Value,
+        links: Vec<ResourceLink>,
+    },
     /// Content blocks and no `structuredContent`.
     Content(Vec<ToolContent>),
     /// The tool ran and failed in a way the caller should read and may
@@ -117,8 +170,18 @@ pub enum ToolReply {
 }
 
 impl ToolReply {
-    /// The JSON of a [`Self::Structured`] reply; any other reply comes back
-    /// unchanged. For a surface that carries JSON only.
+    /// A structured JSON answer paired with MCP `resource_link` follow-ups.
+    #[must_use]
+    pub const fn structured_with_links(
+        structured: serde_json::Value,
+        links: Vec<ResourceLink>,
+    ) -> Self {
+        Self::StructuredWithLinks { structured, links }
+    }
+
+    /// The JSON of a [`Self::Structured`] or [`Self::StructuredWithLinks`]
+    /// reply; any other reply comes back unchanged. For a surface that carries
+    /// JSON only.
     ///
     /// # Errors
     ///
@@ -127,7 +190,10 @@ impl ToolReply {
     pub fn into_structured(self) -> Result<serde_json::Value, Self> {
         // `Proxiima.ToolSurface.jsonReply`.
         match self {
-            Self::Structured(value) => Ok(value),
+            Self::Structured(value)
+            | Self::StructuredWithLinks {
+                structured: value, ..
+            } => Ok(value),
             other @ (Self::Content(_) | Self::Failure(_) | Self::StructuredFailure { .. }) => {
                 Err(other)
             }
@@ -158,12 +224,30 @@ mod tests {
     }
 
     #[test]
+    fn resource_link_builder_sets_optional_fields() {
+        let link = ResourceLink::new("app://item/1", "item-1")
+            .with_title("Item 1")
+            .with_description("Summary of item 1")
+            .with_mime_type("application/json");
+        assert_eq!(link.uri, "app://item/1");
+        assert_eq!(link.name, "item-1");
+        assert_eq!(link.title.as_deref(), Some("Item 1"));
+        assert_eq!(link.description.as_deref(), Some("Summary of item 1"));
+        assert_eq!(link.mime_type.as_deref(), Some("application/json"));
+    }
+
+    #[test]
     fn only_structured_replies_become_json() {
         let json = serde_json::json!({"a": 1});
         assert_eq!(
             ToolReply::Structured(json.clone()).into_structured(),
-            Ok(json)
+            Ok(json.clone())
         );
+        let with_links = ToolReply::structured_with_links(
+            json.clone(),
+            vec![ResourceLink::new("app://item/1", "item-1")],
+        );
+        assert_eq!(with_links.clone().into_structured(), Ok(json));
         let content = ToolReply::Content(vec![ToolContent::text("x")]);
         assert_eq!(content.clone().into_structured(), Err(content));
         let failure = ToolReply::Failure(vec![ToolContent::text("x")]);
@@ -181,6 +265,7 @@ mod tests {
                 "structured",
                 ToolReply::Structured(serde_json::json!({"a": 1})),
             ),
+            ("structuredWithLinks", with_links),
             ("content", ToolReply::Content(Vec::new())),
             ("failure", ToolReply::Failure(Vec::new())),
             ("structuredFailure", structured_failure),

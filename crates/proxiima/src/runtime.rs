@@ -1221,6 +1221,9 @@ fn resolve_mcp_edge(
     if let Some(host_tools) = parts.host_tools.clone() {
         tool_host = tool_host.with_host_tools(host_tools);
     }
+    if let Some(host_resources) = parts.host_resources.clone() {
+        tool_host = tool_host.with_host_resources(host_resources);
+    }
     let rest_router = rest_router(&tool_host, config);
     crate::McpEdge {
         tool_host,

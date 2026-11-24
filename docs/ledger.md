@@ -7215,9 +7215,16 @@ stateDiagram-v2
 **Reply**: The typed reply forms an entered tool can produce.
 
 - structured
+- structuredWithLinks
 - content
 - failure
 - structuredFailure
+
+**Resource scheme**: Whether a resource URI scheme is reserved by the substrate, host-defined, or invalid.
+
+- reserved
+- hostDefined
+- invalid
 
 **Instruction source**: Text sources composing MCP instructions, in rendering order.
 
@@ -7291,6 +7298,8 @@ stateDiagram-v2
 
 **listing checks** = \[callerScope, servedSurface, ownerAccess, requestBehaviors]: Listings intersect caller scope, deployment policy, owner access and behavior visibility.
 
+**reserved resource scheme** = "proxiima": The URI scheme reserved for core substrate resources.
+
 **instruction order** = \[visibleSurface, boundedHostContribution]: Generated instructions precede a bounded host contribution.
 
 **list change listeners** = \[initializedSession, selectedSubscription]: Sessions and selected subscriptions listen for tool-list changes.
@@ -7355,12 +7364,21 @@ stateDiagram-v2
 | reply | json reply | reply with output schema |
 | --- | --- | --- |
 | structured | yes | yes |
+| structuredWithLinks | yes | yes |
 | content | no | no |
 | failure | no | yes |
 | structuredFailure | no | no |
 
-- json reply: Only structured success can become a JSON-only answer.
+- json reply: Structured success variants can become a JSON-only answer.
 - reply with output schema: Which reply form a tool with an output schema may return successfully.
+
+| resource scheme | host resource scheme admitted |
+| --- | --- |
+| reserved | no |
+| hostDefined | yes |
+| invalid | no |
+
+- host resource scheme admitted: Host resource listings and reads admit only valid non-reserved schemes.
 
 ## Transport
 

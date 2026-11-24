@@ -320,7 +320,8 @@ pub use proxiima_core::catalog::{ArgvActionSpec, OwnerNeed, ToolAudience};
 /// with the reply it passes along ([`ToolReply`]) and the view
 /// [`RequestBehavior::visible`] reads ([`ToolDescriptorView`]).
 pub use proxiima_core::catalog::{
-    Next, RequestBehavior, ToolCall, ToolContent, ToolDescriptorView, ToolReply, ToolSource,
+    Next, RequestBehavior, ResourceLink, ToolCall, ToolContent, ToolDescriptorView, ToolReply,
+    ToolSource,
 };
 /// sqlx → `StorageError` classifier for hand-written [`PgMemorySidecar`]
 /// inserts; `pg_sidecar!` expansions use the same one.

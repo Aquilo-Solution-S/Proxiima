@@ -179,18 +179,31 @@ def effectHints : Effect → EffectHints
 
 /-- The typed reply forms an entered tool can produce. -/
 inductive Reply where
-  | structured | content | failure | structuredFailure
+  | structured | structuredWithLinks | content | failure | structuredFailure
   deriving DecidableEq
 
-/-- Only structured success can become a JSON-only answer. -/
+/-- Structured success variants can become a JSON-only answer. -/
 def jsonReply : Reply → Bool
-  | .structured => true
+  | .structured | .structuredWithLinks => true
   | .content | .failure | .structuredFailure => false
 
 /-- Which reply form a tool with an output schema may return successfully. -/
 def replyWithOutputSchema : Reply → Bool
-  | .structured | .failure => true
+  | .structured | .structuredWithLinks | .failure => true
   | .content | .structuredFailure => false
+
+/-- The URI scheme reserved for core substrate resources. -/
+def reservedResourceScheme : String := "proxiima"
+
+/-- Whether a resource URI scheme is reserved by the substrate, host-defined, or invalid. -/
+inductive ResourceScheme where
+  | reserved | hostDefined | invalid
+  deriving DecidableEq
+
+/-- Host resource listings and reads admit only valid non-reserved schemes. -/
+def hostResourceSchemeAdmitted : ResourceScheme → Bool
+  | .hostDefined => true
+  | .reserved | .invalid => false
 
 /-- Text sources composing MCP instructions, in rendering order. -/
 inductive InstructionSource where

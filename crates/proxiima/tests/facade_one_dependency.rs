@@ -478,3 +478,45 @@ async fn observed_host_reply(
     let _: Option<proxiima::ScopeKey> = judged;
     reply
 }
+
+#[derive(Debug)]
+struct FacadeHostResources;
+
+#[async_trait::async_trait]
+impl proxiima::HostResources for FacadeHostResources {
+    async fn list(
+        &self,
+        _auth: &proxiima::AuthContext,
+    ) -> Result<Vec<proxiima::HostResource>, proxiima::ToolError> {
+        Ok(vec![proxiima::HostResource::new("app://index", "index")])
+    }
+
+    async fn list_templates(
+        &self,
+        _auth: &proxiima::AuthContext,
+    ) -> Result<Vec<proxiima::HostResourceTemplate>, proxiima::ToolError> {
+        Ok(vec![proxiima::HostResourceTemplate::new(
+            "app://item/{id}",
+            "item",
+        )])
+    }
+
+    async fn read(
+        &self,
+        uri: &str,
+        _ctx: proxiima::ToolCtx,
+    ) -> Result<Option<Vec<proxiima::HostResourceContent>>, proxiima::ToolError> {
+        Ok(Some(vec![proxiima::HostResourceContent::text(uri, "ok")]))
+    }
+}
+
+#[test]
+fn facade_exposes_host_resources_and_resource_links() {
+    let link: proxiima::ResourceLink =
+        proxiima::spiice::ResourceLink::new("app://item/1", "item-1").with_title("Item 1");
+    let reply =
+        proxiima::ToolReply::structured_with_links(serde_json::json!({"ok": true}), vec![link]);
+    assert_eq!(reply.into_structured(), Ok(serde_json::json!({"ok": true})));
+    let _builder =
+        proxiima::RuntimeBuilder::default().host_resources(Arc::new(FacadeHostResources));
+}

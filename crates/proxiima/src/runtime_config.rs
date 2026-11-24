@@ -13,7 +13,7 @@ use proxiima_core::{
     SpiiceServices, is_loopback_host,
 };
 use proxiima_server::{
-    HostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
+    HostResources, HostTools, McpTransportConfig, RequestHeaderAllowlist, ResourceServerMetadata,
     SessionIdleTimeout,
 };
 use proxiima_storage_pg::{PgHostStateParticipant, PgPlatformScope, PgPoolConfig, PgTuning};
@@ -77,6 +77,7 @@ pub struct RuntimeBuilder {
     authenticator: Option<Arc<dyn Authenticator>>,
     platform_authenticator: Option<PlatformAuthenticatorFactory>,
     host_tools: Option<Arc<dyn HostTools>>,
+    host_resources: Option<Arc<dyn HostResources>>,
     vector_index: Option<Arc<dyn proxiima_core::storage_ports::VectorIndex>>,
     resource_metadata: Option<ResourceServerMetadata>,
     embed_client: Option<Arc<dyn EmbeddingClient>>,
@@ -138,6 +139,7 @@ impl std::fmt::Debug for RuntimeBuilder {
             authenticator,
             platform_authenticator,
             host_tools,
+            host_resources,
             vector_index,
             resource_metadata,
             embed_client,
@@ -191,6 +193,7 @@ impl std::fmt::Debug for RuntimeBuilder {
                 &platform_authenticator.is_some(),
             )
             .field("host_tools", &host_tools)
+            .field("host_resources", &host_resources)
             .field("has_vector_index", &vector_index.is_some())
             .field("has_resource_metadata", &resource_metadata.is_some())
             .field("has_embed_client", &embed_client.is_some())
@@ -256,6 +259,7 @@ impl RuntimeBuilder {
             authenticator,
             platform_authenticator,
             host_tools: self.host_tools.or(base.host_tools),
+            host_resources: self.host_resources.or(base.host_resources),
             vector_index: self.vector_index.or(base.vector_index),
             resource_metadata: self.resource_metadata.or(base.resource_metadata),
             embed_client: self.embed_client.or(base.embed_client),
@@ -699,6 +703,14 @@ impl RuntimeBuilder {
     #[must_use]
     pub fn host_tools(mut self, tools: Arc<dyn HostTools>) -> Self {
         self.host_tools = Some(tools);
+        self
+    }
+
+    /// Serve `resources` on `/mcp` beside Proxiima's `proxiima://` resources
+    /// ([`HostResources`]).
+    #[must_use]
+    pub fn host_resources(mut self, resources: Arc<dyn HostResources>) -> Self {
+        self.host_resources = Some(resources);
         self
     }
 
@@ -1207,6 +1219,7 @@ impl RuntimeBuilder {
             authenticator: self.authenticator,
             platform_authenticator: self.platform_authenticator,
             host_tools: self.host_tools,
+            host_resources: self.host_resources,
             storage: storage_parts,
             embed_client: self.embed_client,
             embedding_router: self.embedding_router,
@@ -1633,6 +1646,8 @@ pub struct RuntimeParts {
     pub platform_authenticator: Option<PlatformAuthenticatorFactory>,
     /// Host tools served on `/mcp` ([`RuntimeBuilder::host_tools`]).
     pub host_tools: Option<Arc<dyn HostTools>>,
+    /// Host resources served on `/mcp` ([`RuntimeBuilder::host_resources`]).
+    pub host_resources: Option<Arc<dyn HostResources>>,
     /// The parts storage boot reads.
     pub storage: StorageParts,
     pub embed_client: Option<Arc<dyn EmbeddingClient>>,
@@ -1666,6 +1681,7 @@ impl std::fmt::Debug for RuntimeParts {
                 &self.platform_authenticator.is_some(),
             )
             .field("host_tools", &self.host_tools)
+            .field("host_resources", &self.host_resources)
             .field("storage", &self.storage)
             .field("has_embed_client", &self.embed_client.is_some())
             .field("has_embedding_router", &self.embedding_router.is_some())

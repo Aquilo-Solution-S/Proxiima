@@ -2144,3 +2144,326 @@ async fn oversized_streamed_body_is_truncated_with_error() {
     let status = app.oneshot(request).await.unwrap().status();
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[derive(Debug)]
+struct LinkedToolAndResources;
+
+#[async_trait::async_trait]
+impl crate::HostTools for LinkedToolAndResources {
+    async fn list(
+        &self,
+        _auth: &crate::AuthContext,
+    ) -> Result<Vec<crate::HostTool>, proxiima_core::ToolError> {
+        Ok(vec![
+            crate::HostTool::new(
+                "host_summary",
+                "Returns a compact summary with follow-up links",
+                serde_json::json!({"type": "object", "properties": {}}),
+                proxiima_core::ToolEffect::ReadOnly,
+            )
+            .with_output_schema(serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+            })),
+        ])
+    }
+
+    async fn call(
+        &self,
+        _call: proxiima_core::catalog::ToolCall,
+    ) -> Result<proxiima_core::ToolReply, proxiima_core::ToolError> {
+        Ok(proxiima_core::ToolReply::structured_with_links(
+            serde_json::json!({"id": "doc-1"}),
+            vec![
+                proxiima_core::ResourceLink::new("app://doc/doc-1", "doc-1")
+                    .with_title("Document 1")
+                    .with_description("Full document body")
+                    .with_mime_type("text/markdown"),
+            ],
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::HostResources for LinkedToolAndResources {
+    async fn list(
+        &self,
+        _auth: &crate::AuthContext,
+    ) -> Result<Vec<crate::HostResource>, proxiima_core::ToolError> {
+        Ok(vec![
+            crate::HostResource::new("app://index", "app-index")
+                .with_title("App Index")
+                .with_description("Host index")
+                .with_mime_type("application/json"),
+            crate::HostResource::new("proxiima://shadow", "shadow"),
+        ])
+    }
+
+    async fn list_templates(
+        &self,
+        _auth: &crate::AuthContext,
+    ) -> Result<Vec<crate::HostResourceTemplate>, proxiima_core::ToolError> {
+        Ok(vec![
+            crate::HostResourceTemplate::new("app://doc/{id}", "app-doc")
+                .with_title("App Document")
+                .with_description("Drill-down document")
+                .with_mime_type("text/markdown"),
+            crate::HostResourceTemplate::new("PROXIIMA://shadow/{id}", "shadow-template"),
+        ])
+    }
+
+    async fn read(
+        &self,
+        uri: &str,
+        ctx: proxiima_core::ToolCtx,
+    ) -> Result<Option<Vec<crate::HostResourceContent>>, proxiima_core::ToolError> {
+        assert!(
+            !uri.to_ascii_lowercase().starts_with("proxiima://"),
+            "reserved scheme must never reach HostResources::read: {uri}"
+        );
+        match uri {
+            "app://doc/doc-1" => Ok(Some(vec![
+                crate::HostResourceContent::text(uri, format!("# Doc 1 for {}", ctx.owner()))
+                    .with_mime_type("text/markdown"),
+            ])),
+            "app://blob/1" => Ok(Some(vec![
+                crate::HostResourceContent::blob(uri, [0x00, 0x01, 0xff])
+                    .with_mime_type("application/octet-stream"),
+            ])),
+            "app://doc/not-found" => {
+                Err(proxiima_core::ToolError::NotFound("doc not found".into()))
+            }
+            "app://doc/denied" => Err(proxiima_core::ToolError::NotAuthorized(uri.into())),
+            "app://spoof/text" => Ok(Some(vec![crate::HostResourceContent::text(
+                "proxiima://how-to",
+                "forged substrate guidance",
+            )])),
+            "app://spoof/blob" => Ok(Some(vec![crate::HostResourceContent::blob(
+                "PROXIIMA://memory/123",
+                [0xde, 0xad, 0xbe, 0xef],
+            )])),
+            "app://spoof/invalid" => Ok(Some(vec![crate::HostResourceContent::text(
+                "relative/path",
+                "malformed",
+            )])),
+            "app://spoof/malformed-text" => Ok(Some(vec![crate::HostResourceContent::text(
+                "app://items/%ZZ",
+                "malformed suffix",
+            )])),
+            "app://spoof/malformed-blob" => Ok(Some(vec![crate::HostResourceContent::blob(
+                "app://items/%ZZ",
+                [0x01, 0x02],
+            )])),
+            _ => Ok(None),
+        }
+    }
+}
+
+fn read_resource_rpc(uri: &str, auth: crate::AuthContext) -> Request<Body> {
+    let mut request = per_request_rpc(
+        "2026-07-28",
+        "resources/read",
+        serde_json::json!({"uri": uri}),
+    );
+    request
+        .headers_mut()
+        .insert("Mcp-Name", uri.parse().unwrap());
+    request.extensions_mut().insert(auth);
+    request
+}
+
+/// A host tool can return `structuredContent` alongside MCP `resource_link`
+/// blocks, and a client can immediately follow those links through
+/// `resources/list`, `resources/templates/list`, and `resources/read`.
+#[tokio::test]
+async fn structured_with_links_and_host_resources_roundtrip_over_mcp() {
+    let source = Arc::new(LinkedToolAndResources);
+    let host = stub_host()
+        .with_host_tools(source.clone())
+        .with_host_resources(source);
+    let service = mcp_service_for(host);
+    let owner = personal_owner();
+    let auth = auth_for(owner);
+
+    // 1. Tool call returns structuredContent + JSON text block + trailing resource_link.
+    let mut call = per_request_rpc(
+        "2026-07-28",
+        "tools/call",
+        serde_json::json!({"name": "host_summary", "arguments": {}}),
+    );
+    call.headers_mut()
+        .insert("Mcp-Name", "host_summary".parse().unwrap());
+    call.extensions_mut().insert(auth.clone());
+    let called = first_message(service.clone(), call).await;
+    assert_eq!(
+        called["result"]["structuredContent"],
+        serde_json::json!({"id": "doc-1"}),
+        "{called}"
+    );
+    let content = called["result"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2, "{called}");
+    assert_eq!(content[0]["type"], "text");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(content[0]["text"].as_str().unwrap()).unwrap(),
+        serde_json::json!({"id": "doc-1"})
+    );
+    assert_eq!(content[1]["type"], "resource_link");
+    assert_eq!(content[1]["uri"], "app://doc/doc-1");
+    assert_eq!(content[1]["name"], "doc-1");
+    assert_eq!(content[1]["title"], "Document 1");
+    assert_eq!(content[1]["description"], "Full document body");
+    assert_eq!(content[1]["mimeType"], "text/markdown");
+
+    // 2. resources/list includes app://index and omits reserved proxiima://shadow.
+    let listed = first_message(service.clone(), authed_rpc("resources/list", auth.clone())).await;
+    let uris: Vec<&str> = listed["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["uri"].as_str())
+        .collect();
+    assert!(uris.contains(&"app://index"), "{listed}");
+    assert!(!uris.contains(&"proxiima://shadow"), "{listed}");
+
+    // 3. resources/templates/list includes app://doc/{id} and omits reserved templates.
+    let templates = first_message(
+        service.clone(),
+        authed_rpc("resources/templates/list", auth.clone()),
+    )
+    .await;
+    let tmpls: Vec<&str> = templates["result"]["resourceTemplates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["uriTemplate"].as_str())
+        .collect();
+    assert!(tmpls.contains(&"app://doc/{id}"), "{templates}");
+    assert!(!tmpls.contains(&"PROXIIMA://shadow/{id}"), "{templates}");
+
+    // 4. Follow the resource_link through resources/read (text + blob + errors + reserved).
+    let doc = first_message(
+        service.clone(),
+        read_resource_rpc("app://doc/doc-1", auth.clone()),
+    )
+    .await;
+    assert_eq!(
+        doc["result"]["contents"][0]["text"],
+        format!("# Doc 1 for {owner}"),
+        "{doc}"
+    );
+    assert_eq!(doc["result"]["contents"][0]["mimeType"], "text/markdown");
+
+    let blob = first_message(
+        service.clone(),
+        read_resource_rpc("app://blob/1", auth.clone()),
+    )
+    .await;
+    assert_eq!(blob["result"]["contents"][0]["blob"], "AAH/", "{blob}");
+    assert_eq!(
+        blob["result"]["contents"][0]["mimeType"],
+        "application/octet-stream"
+    );
+
+    // On 2026-07-28 rmcp upgrades `ErrorCode::RESOURCE_NOT_FOUND` (-32002) to
+    // `ErrorCode::INVALID_PARAMS` (-32602).
+    for (uri, expected_msg) in [
+        ("app://doc/missing", "unknown resource app://doc/missing"),
+        ("app://doc/not-found", "doc not found"),
+        ("proxiima://shadow", "unknown resource: proxiima://shadow"),
+        ("PROXIIMA://shadow", "unknown resource PROXIIMA://shadow"),
+    ] {
+        let reply = first_message(service.clone(), read_resource_rpc(uri, auth.clone())).await;
+        assert_eq!(reply["error"]["code"], -32602, "{uri}: {reply}");
+        assert_eq!(reply["error"]["message"], expected_msg, "{uri}: {reply}");
+    }
+
+    let denied = first_message(service, read_resource_rpc("app://doc/denied", auth)).await;
+    assert_eq!(denied["error"]["code"], -32600, "{denied}");
+    assert_eq!(
+        denied["error"]["message"], "resource app://doc/denied not authorized for this MCP token",
+        "{denied}"
+    );
+}
+
+/// A host read response whose text or blob entry claims a reserved
+/// `proxiima://` URI (any case) or an invalid scheme is refused as an internal
+/// server error rather than delivered to the client.
+#[tokio::test]
+async fn host_read_cannot_claim_reserved_or_invalid_content_uri_over_mcp() {
+    let source = Arc::new(LinkedToolAndResources);
+    let host = stub_host().with_host_resources(source);
+    let service = mcp_service_for(host);
+    let auth = auth_for(personal_owner());
+
+    for uri in [
+        "app://spoof/text",
+        "app://spoof/blob",
+        "app://spoof/invalid",
+        "app://spoof/malformed-text",
+        "app://spoof/malformed-blob",
+    ] {
+        let reply = first_message(service.clone(), read_resource_rpc(uri, auth.clone())).await;
+        assert!(reply.get("result").is_none(), "{uri}: {reply}");
+        assert_eq!(reply["error"]["code"], -32603, "{uri}: {reply}");
+        assert_eq!(
+            reply["error"]["message"], "internal server error",
+            "{uri}: {reply}"
+        );
+    }
+}
+
+/// A host tool that returns a malformed `ResourceLink` URI is refused with an
+/// internal server error, while a valid substrate `proxiima://` link is
+/// emitted alongside host links.
+#[tokio::test]
+async fn structured_with_links_validates_link_uris_and_allows_substrate_links_over_mcp() {
+    let owner = personal_owner();
+    let auth = auth_for(owner);
+
+    let bad = Arc::new(HostFixture::new(
+        vec![crate::HostTool::new(
+            "host_bad_link",
+            "Returns a malformed link",
+            serde_json::json!({"type": "object", "properties": {}}),
+            proxiima_core::ToolEffect::ReadOnly,
+        )],
+        proxiima_core::ToolReply::structured_with_links(
+            serde_json::json!({"ok": true}),
+            vec![proxiima_core::ResourceLink::new("app://items/%ZZ", "bad")],
+        ),
+    ));
+    let bad_service = mcp_service_for(stub_host().with_host_tools(bad));
+    let bad_reply = first_message(bad_service, tools_call("host_bad_link", owner)).await;
+    assert!(bad_reply.get("result").is_none(), "{bad_reply}");
+    assert_eq!(bad_reply["error"]["code"], -32603, "{bad_reply}");
+    assert_eq!(
+        bad_reply["error"]["message"], "internal server error",
+        "{bad_reply}"
+    );
+
+    let substrate = Arc::new(HostFixture::new(
+        vec![crate::HostTool::new(
+            "host_substrate_link",
+            "Returns a substrate resource link",
+            serde_json::json!({"type": "object", "properties": {}}),
+            proxiima_core::ToolEffect::ReadOnly,
+        )],
+        proxiima_core::ToolReply::structured_with_links(
+            serde_json::json!({"ok": true}),
+            vec![
+                proxiima_core::ResourceLink::new("proxiima://how-to", "how-to")
+                    .with_mime_type("text/markdown"),
+            ],
+        ),
+    ));
+    let substrate_service = mcp_service_for(stub_host().with_host_tools(substrate));
+    let mut call = tools_call("host_substrate_link", owner);
+    call.extensions_mut().insert(auth);
+    let ok_reply = first_message(substrate_service, call).await;
+    let content = ok_reply["result"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2, "{ok_reply}");
+    assert_eq!(content[1]["type"], "resource_link");
+    assert_eq!(content[1]["uri"], "proxiima://how-to");
+    assert_eq!(content[1]["name"], "how-to");
+}

@@ -503,6 +503,22 @@ let (judged, reply) = host
     .await;
 ```
 
+Tools that return a small structured summary with follow-up MCP `resource_link`
+blocks answer `ToolReply::StructuredWithLinks` (using `ResourceLink`). JSON-only
+surfaces (`REST`, `CoreMcpTools`) unwrap the structured object; MCP emits
+`structuredContent`, the JSON text block, and each trailing `resource_link`.
+
+A host may also expose its own non-`proxiima://` MCP resources and URI templates
+beside the substrate catalog by implementing `HostResources` and wiring it with
+`RuntimeBuilder::host_resources` or `ToolHost::with_host_resources`. Proxiima
+keeps the `proxiima://` scheme unconditionally across inbound requests, listings,
+templates, and returned content URIs. Edge authentication runs ahead of every
+callback and `HostResources::read` receives a `ToolCtx` with the same boot and
+per-request services as `HostTools`, but host resources bypass the registry's
+`RequestBehavior` onion and static `ScopeKey::Resource` gate; the host must
+authorize every entry in `list` / `list_templates` and independently authorize
+every direct `read` (a client can call `resources/read` without listing first).
+
 `call_tool_reply_in_request` and `ServerHandler::call_tool` run this same
 path and drop the key. It is `None` when the call failed before the gate
 derived one. A behavior wrapping the gate reads `ctx.judged()` from its own

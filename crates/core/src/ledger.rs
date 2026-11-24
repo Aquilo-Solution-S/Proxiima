@@ -1193,6 +1193,10 @@ macro_rules! ledger {
     (Proxiima.ToolSurface.problemTypePrefix) => {
         "https://proxiima.dev/errors/"
     };
+    // The URI scheme reserved for core substrate resources.
+    (Proxiima.ToolSurface.reservedResourceScheme) => {
+        "proxiima"
+    };
     // The loopback address supplied by the canonical MCP host.
     (Proxiima.Transport.canonicalBind) => {
         "127.0.0.1:31415"

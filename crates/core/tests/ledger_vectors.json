@@ -66,6 +66,7 @@
   {"out": false, "in": ["resource"]}],
  "Proxiima.ToolSurface.replyWithOutputSchema":
  [{"out": true, "in": ["structured"]},
+  {"out": true, "in": ["structuredWithLinks"]},
   {"out": false, "in": ["content"]},
   {"out": true, "in": ["failure"]},
   {"out": false, "in": ["structuredFailure"]}],
@@ -82,9 +83,14 @@
   {"out": "goalWork", "in": [false, "goalWork"]}],
  "Proxiima.ToolSurface.jsonReply":
  [{"out": true, "in": ["structured"]},
+  {"out": true, "in": ["structuredWithLinks"]},
   {"out": false, "in": ["content"]},
   {"out": false, "in": ["failure"]},
   {"out": false, "in": ["structuredFailure"]}],
+ "Proxiima.ToolSurface.hostResourceSchemeAdmitted":
+ [{"out": false, "in": ["reserved"]},
+  {"out": true, "in": ["hostDefined"]},
+  {"out": false, "in": ["invalid"]}],
  "Proxiima.ToolSurface.effectSource":
  [{"out": "tool", "in": ["flat"]},
   {"out": "selectedAction", "in": ["taggedAction"]},
