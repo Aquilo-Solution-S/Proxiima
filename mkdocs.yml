@@ -28,6 +28,7 @@ exclude_docs: |
   superpowers/
 nav:
   - Home: index.md
+  - Causa: causa.md
   - Concepts: concepts.md
   - Ledger: ledger.md
   - Decisions: decisions.md
