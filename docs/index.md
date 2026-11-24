@@ -9,6 +9,7 @@ the core supplies the durable graph and its write rules.
 
 | Need | Page |
 |---|---|
+| Read the Lean 4 epistemology and verification stack | [Causa](causa.md) |
 | Understand the model | [Concepts](concepts.md) |
 | Map identity, groups, and ownership to a use case | [Identity and ownership](concepts.md#identity-and-ownership) |
 | Run a local server | [Get started](get-started.md) |

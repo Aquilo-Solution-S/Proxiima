@@ -126,6 +126,31 @@ inductive GroundsInFact (memories : Set Memory) : Memory → Prop where
   | step {m tgt} : groundingFrom m tgt →
       GroundsInFact memories tgt → GroundsInFact memories m
 
+/-- A grounding chain inside `memories` ending at a specific admitted Fact. -/
+inductive GroundsThroughFact (memories : Set Memory) (leaf : Memory) : Memory → Prop where
+  | base : leaf ∈ memories → memory_kind leaf = .Fact →
+      GroundsThroughFact memories leaf leaf
+  | step {m tgt : Memory} : m ∈ memories → tgt ∈ memories → groundingFrom m tgt →
+      GroundsThroughFact memories leaf tgt → GroundsThroughFact memories leaf m
+
+/-- Any grounding chain through a specific admitted Fact stays in `memories`. -/
+theorem groundsThroughFact_mem
+    (memories : Set Memory) (leaf m : Memory)
+    (h : GroundsThroughFact memories leaf m) :
+    leaf ∈ memories ∧ m ∈ memories := by
+  induction h with
+  | base hmem _ => exact ⟨hmem, hmem⟩
+  | step hm _ _ _ ih => exact ⟨ih.1, hm⟩
+
+/-- Any grounding chain through a specific admitted Fact establishes `Causa.GroundsInFact`. -/
+theorem groundsThroughFact_groundsInFact
+    (memories : Set Memory) (leaf m : Memory)
+    (h : GroundsThroughFact memories leaf m) :
+    GroundsInFact memories m := by
+  induction h with
+  | base _ hk => exact GroundsInFact.fact hk
+  | step _ _ hfrom _ ih => exact GroundsInFact.step hfrom ih
+
 theorem memory_grounds_in_facts
     (memories : Set Memory) (goals : Set Goal)
     (heads : Set MemoryHead)
