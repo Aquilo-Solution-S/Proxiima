@@ -8295,6 +8295,8 @@ Causa — Principles
 
 ✓ **principle 8 a goal never grounds** (axioms: `propext`): Principle 8 — Goal intent is outside Memory grounding.
 
+✓ **principle 9 reflective goal observation grounds** (axioms: `propext`): Principle 9 — A Goal observed in an admitted Fact resolves in Goal space without entering Memory origins, and any admitted derivation chained through that Fact grounds in Facts.
+
 Causa — Provenance grounding
 
 - Definition **grounding from**: The origins and references that contribute to `Proxiima.Edges.groundingFields`.
@@ -8345,6 +8347,10 @@ Causa — Provenance grounding
 - Premise **terminal close**: Causa.RetainedGoalTerminalCloseFactValid goals memories targets
 
 ✓ **grounding wf** (axioms: `propext`)
+
+✓ **grounds through fact mem** (axioms: none): Any grounding chain through a specific admitted Fact stays in `memories`.
+
+✓ **grounds through fact grounds in fact** (axioms: none): Any grounding chain through a specific admitted Fact establishes `Causa.GroundsInFact`.
 
 ✓ **memory grounds in facts** (axioms: `propext`)
 

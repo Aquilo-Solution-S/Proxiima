@@ -147,4 +147,22 @@ theorem principle_8_a_goal_never_grounds
   · intro hk id hid
     exact guidance_does_not_ground memories goals heads hgraph m hm hk id hid
 
+/-- Principle 9 — A Goal observed in an admitted Fact resolves in Goal space without entering Memory origins, and any admitted derivation chained through that Fact grounds in Facts. -/
+theorem principle_9_reflective_goal_observation_grounds
+    (memories : Set Memory) (goals : Set Goal) (heads : Set MemoryHead)
+    (hgraph : MemoryGraphValid memories goals heads)
+    (f : Memory) (goal_id : GoalId) (hobserves : goal_id ∈ memory_goal_refs f)
+    (m : Memory) (hchain : GroundsThroughFact memories f m) :
+    m ∈ memories ∧
+    (∃ g : Goal, g ∈ goals ∧ goal_t g = goal_id ∧
+      ∀ n : Memory, n ∈ memories → goal_t g ∉ memory_origins n) ∧
+    GroundsInFact memories m := by
+  have ⟨hf, hm⟩ := groundsThroughFact_mem memories f m hchain
+  obtain ⟨g, hg, hgt⟩ :=
+    (principle_4_the_field_fixes_the_kind memories goals heads hgraph f hf).2.2
+      goal_id hobserves
+  refine ⟨hm, ⟨g, hg, hgt, ?_⟩, groundsThroughFact_groundsInFact memories f m hchain⟩
+  intro n hn
+  exact (principle_8_a_goal_never_grounds memories goals heads hgraph n hn).1 g hg
+
 end Causa
