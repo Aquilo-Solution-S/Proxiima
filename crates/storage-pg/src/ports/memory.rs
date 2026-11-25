@@ -11,7 +11,7 @@ use proxiima_core::{
     MemoryId, MemoryKindRow, OwnerId, StorageError,
 };
 
-use crate::error::{internal, with_bounded_retry};
+use crate::error::{map_err, with_bounded_retry};
 use crate::{PgStorage, verbs};
 
 #[async_trait::async_trait]
@@ -164,7 +164,7 @@ impl MemoryAuthoringPort for PgStorage {
         .bind(&ids)
         .fetch_all(&mut *tx)
         .await
-        .map_err(internal)?;
+        .map_err(map_err)?;
         crate::write_wake::commit(tx).await?;
         Ok(rows
             .into_iter()

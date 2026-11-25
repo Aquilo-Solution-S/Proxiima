@@ -2279,7 +2279,6 @@ CREATE OR REPLACE FUNCTION proxiima_core.lexical_language_forget(config_to_forge
 AS $function$
 DECLARE
     holder_table text;
-    fk_detail text;
 BEGIN
     IF config_to_forget IS NULL THEN
         RAISE EXCEPTION 'lexical configuration must not be null'
@@ -2297,11 +2296,9 @@ BEGIN
         -- Zero rows deleted = not registered: nothing to forget.
     EXCEPTION
         WHEN foreign_key_violation THEN
-            GET STACKED DIAGNOSTICS
-                holder_table = TABLE_NAME,
-                fk_detail = PG_EXCEPTION_DETAIL;
-            RAISE EXCEPTION 'cannot forget %: rows in % still reference it (%)',
-                config_to_forget, holder_table, fk_detail
+            GET STACKED DIAGNOSTICS holder_table = TABLE_NAME;
+            RAISE EXCEPTION 'cannot forget %: rows in % still reference it',
+                config_to_forget, holder_table
                 USING ERRCODE = 'PX002';
     END;
 END

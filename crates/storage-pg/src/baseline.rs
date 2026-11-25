@@ -7,7 +7,7 @@ use sqlx::PgConnection;
 use sqlx::migrate::{Migration, Migrator};
 
 use crate::VectorStorage;
-use crate::error::internal;
+use crate::error::boot_fault;
 
 /// The release whose head this release adopts; an older store migrates with it
 /// first.
@@ -243,13 +243,13 @@ pub(crate) async fn adopt(
     sqlx::query(ADOPT_SCHEMA_SQL)
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     let versions: Vec<i64> = PREVIOUS_HEAD.iter().map(|(version, _)| *version).collect();
     sqlx::query("DELETE FROM public._sqlx_migrations WHERE version = ANY($1)")
         .bind(versions)
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     for migration in head.adopted_rows(migrator) {
         sqlx::query(
             "INSERT INTO public._sqlx_migrations
@@ -261,7 +261,7 @@ pub(crate) async fn adopt(
         .bind(migration.checksum.as_ref())
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     }
     Ok(())
 }

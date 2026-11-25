@@ -724,7 +724,7 @@ impl PublicationConsumerPort for PgStorage {
         // so a refusal here means a row was written around both.
         let result = names
             .into_iter()
-            .map(|name| ConsumerName::new(name).map_err(internal))
+            .map(|name| ConsumerName::new(name).map_err(|e| internal(e.to_string())))
             .collect();
         crate::owner_scope::finish_transaction(tx, result).await
     }
@@ -751,7 +751,7 @@ impl PublicationConsumerPort for PgStorage {
             .into_iter()
             .map(|(name, pending)| {
                 Ok((
-                    ConsumerName::new(name).map_err(internal)?,
+                    ConsumerName::new(name).map_err(|e| internal(e.to_string()))?,
                     int_to_u64(pending, "pending outbox deliveries")?,
                 ))
             })
@@ -993,18 +993,18 @@ async fn current_lane_state(
 /// means the row was altered outside it, and the honest answer is to refuse
 /// the record rather than to publish a plausible reconstruction of it.
 fn claimed_from_row(row: &sqlx::postgres::PgRow) -> Result<ClaimedPublication, StorageError> {
-    let id: Uuid = row.try_get("t").map_err(internal)?;
-    let digest: Vec<u8> = row.try_get("envelope_digest").map_err(internal)?;
+    let id: Uuid = row.try_get("t").map_err(map_err)?;
+    let digest: Vec<u8> = row.try_get("envelope_digest").map_err(map_err)?;
     let digest: [u8; 32] = digest.try_into().map_err(|_| {
         StorageError::Internal("captured envelope digest is not 32 bytes".to_string())
     })?;
-    let schema_version: i32 = row.try_get("schema_version").map_err(internal)?;
+    let schema_version: i32 = row.try_get("schema_version").map_err(map_err)?;
     let schema_version = u32::try_from(schema_version).map_err(|_| {
         StorageError::Internal(format!(
             "publication {id} carries schema version {schema_version}, which is not a version"
         ))
     })?;
-    let attempts: i32 = row.try_get("attempts").map_err(internal)?;
+    let attempts: i32 = row.try_get("attempts").map_err(map_err)?;
     let attempts = u32::try_from(attempts).map_err(|_| {
         StorageError::Internal(format!(
             "publication {id} carries {attempts} attempts, which is not a count"
@@ -1012,16 +1012,16 @@ fn claimed_from_row(row: &sqlx::postgres::PgRow) -> Result<ClaimedPublication, S
     })?;
     Ok(ClaimedPublication {
         id,
-        event_id: row.try_get("event_id").map_err(internal)?,
-        owner_id: row.try_get("owner_id").map_err(internal)?,
-        schema_id: row.try_get("schema_id").map_err(internal)?,
+        event_id: row.try_get("event_id").map_err(map_err)?,
+        owner_id: row.try_get("owner_id").map_err(map_err)?,
+        schema_id: row.try_get("schema_id").map_err(map_err)?,
         schema_version,
-        event_type: row.try_get("event_type").map_err(internal)?,
-        envelope: row.try_get("envelope").map_err(internal)?,
+        event_type: row.try_get("event_type").map_err(map_err)?,
+        envelope: row.try_get("envelope").map_err(map_err)?,
         digest,
         attempts,
-        claim: ClaimToken::new(row.try_get("claim_token").map_err(internal)?),
-        lease_expires_at: row.try_get("lease_expires_at").map_err(internal)?,
+        claim: ClaimToken::new(row.try_get("claim_token").map_err(map_err)?),
+        lease_expires_at: row.try_get("lease_expires_at").map_err(map_err)?,
     })
 }
 

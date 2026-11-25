@@ -16,7 +16,7 @@ use proxiima_core::{
 use sqlx::{Postgres, Transaction};
 
 use crate::access::role_columns::RoleColumns;
-use crate::error::internal;
+use crate::error::map_err;
 use crate::pg_enums::PgMemoryKind;
 use crate::sidecars::PgSidecarRegistryFrozen;
 use crate::{PgStorage, verbs};
@@ -661,7 +661,7 @@ impl WriteSession for PgWriteSession {
         )))
         .fetch_optional(&mut *self.tx)
         .await
-        .map_err(internal)?
+        .map_err(map_err)?
         .ok_or(StorageError::NotFound)?;
         verbs::forget::forget_memory(&mut self.tx, &self.sidecars, &self.surfaces, t, owner_id)
             .await

@@ -11,8 +11,8 @@ const RULE_SQLSTATE: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.ru
 
 /// SQLSTATE of a backstop only a core bug, direct SQL or an install-time
 /// diagnostic reaches. It carries no rule and maps to
-/// [`StorageError::Internal`] like any unrecognised code.
-#[cfg(test)]
+/// [`StorageError::Internal`] with core SQL's own sentence, which names the
+/// broken invariant and carries no driver text.
 const INTERNAL_SQLSTATE: &str = proxiima_core::ledger!(Proxiima.DatabaseAuthority.backstopSqlstate);
 
 /// `Some(Refused)` exactly when `code` is [`RULE_SQLSTATE`]; a missing
@@ -24,7 +24,25 @@ fn refusal(code: Option<&str>, constraint: Option<&str>, message: &str) -> Optio
     })
 }
 
-pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
+/// `untranslatable_character`: `jsonb` refuses the `\u0000` escape.
+const UNSTORABLE_JSONB: &str = "22P05";
+/// `character_not_in_repertoire`: `text` refuses a 0x00 byte.
+const UNSTORABLE_TEXT: &str = "22021";
+
+/// A failure that did not come from the database: row conversion,
+/// arithmetic, serialization. `sqlx::Error` does not implement it, so a
+/// query's error cannot reach [`internal`] and keep the driver's sentence;
+/// it goes through [`map_err`].
+pub(crate) trait InternalCause: std::fmt::Display {}
+
+impl InternalCause for String {}
+impl InternalCause for &str {}
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "passed to Result::map_err by name"
+)]
+pub(crate) fn internal(e: impl InternalCause) -> StorageError {
     StorageError::Internal(e.to_string())
 }
 
@@ -38,10 +56,9 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> StorageError {
 /// A `PX001` refusal becomes [`StorageError::Refused`] before any other
 /// classification.
 ///
-/// Postgres's own sentence is forwarded for the constraints this does not
-/// recognise, which means an index name can still reach a caller. That is a
-/// wider leak than one function can fix — each constraint needs its rule
-/// written out here to be translated.
+/// No driver or server sentence travels on: a constraint refusal names its
+/// constraint and SQLSTATE, every other fault only its SQLSTATE, and the
+/// full error is logged here, where it enters (#687).
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
 pub fn map_err(e: sqlx::Error) -> StorageError {
@@ -64,28 +81,99 @@ pub fn map_err(e: sqlx::Error) -> StorageError {
             StorageError::MemoryIdCollision
         }
         Error::Database(db) if db.is_unique_violation() => {
-            StorageError::ConstraintViolation(db.message().to_string())
+            StorageError::ConstraintViolation(refused_by("unique constraint", db.as_ref()))
         }
         Error::Database(db) if db.is_check_violation() => {
-            StorageError::ConstraintViolation(db.message().to_string())
+            StorageError::ConstraintViolation(refused_by("check constraint", db.as_ref()))
         }
         // FK violations are caller-facing (referenced row missing / retracted),
         // not a 5xx-shaped internal fault — surface as Conflict.
         Error::Database(db) if db.is_foreign_key_violation() => {
-            StorageError::Conflict(db.message().to_string())
+            StorageError::Conflict(refused_by("foreign key", db.as_ref()))
+        }
+        // A string the store cannot hold: U+0000 in `jsonb` (22P05) or in
+        // `text` (22021). The caller's input, not a store fault (#687);
+        // tool arguments are refused before this with the string's pointer.
+        Error::Database(db)
+            if matches!(
+                db.code().as_deref(),
+                Some(UNSTORABLE_JSONB | UNSTORABLE_TEXT)
+            ) =>
+        {
+            tracing::warn!(error = ?e, "refused a string the store cannot hold");
+            StorageError::ConstraintViolation(format!(
+                "a string holds a character the store cannot hold, such as U+0000 (SQLSTATE {})",
+                db.code().as_deref().unwrap_or_default()
+            ))
         }
         // Deadlock (40P01), serialization failure (40001) and a lock the
         // caller declined to keep waiting for (55P03) are transient: the
         // whole transaction can be re-run. See `with_bounded_retry`.
         Error::Database(db) if is_retryable_sqlstate(db.code().as_deref()) => {
-            StorageError::Retryable(db.message().to_string())
+            StorageError::Retryable(database_fault(&e))
         }
         // `out_of_memory` (53200) is how the server reports a full shared
         // lock table: the backend is out of room, not the caller at fault.
         Error::Database(db) if db.code().as_deref() == Some("53200") => {
-            StorageError::Unavailable(db.message().to_string())
+            StorageError::Unavailable(database_fault(&e))
         }
-        _ => StorageError::Internal(e.to_string()),
+        Error::Database(db) if db.code().as_deref() == Some(INTERNAL_SQLSTATE) => {
+            tracing::error!(error = ?e, "core SQL backstop");
+            StorageError::Internal(db.message().to_owned())
+        }
+        _ => StorageError::Internal(database_fault(&e)),
+    }
+}
+
+/// A constraint's refusal in this crate's words: which constraint, by its
+/// schema name, and the SQLSTATE. Postgres's sentence can carry values.
+fn refused_by(what: &str, db: &dyn sqlx::error::DatabaseError) -> String {
+    // Debug, not Display: PostgreSQL's DETAIL, HINT and WHERE are only in it.
+    tracing::info!(error = ?db, "constraint refused a write");
+    format!(
+        "{what} {} refused the write (SQLSTATE {})",
+        db.constraint().unwrap_or("(unnamed)"),
+        db.code().as_deref().unwrap_or("unknown")
+    )
+}
+
+/// A schema, migration or connection failure while the store boots. It
+/// reaches the operator who started the process, never a caller, so it keeps
+/// the driver's sentence: the operator needs it, and a tool such as
+/// `dev-migrate` installs no log subscriber. Serving paths use [`map_err`].
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "passed to Result::map_err by name"
+)]
+pub(crate) fn boot_fault(e: sqlx::Error) -> StorageError {
+    StorageError::Internal(e.to_string())
+}
+
+/// A migrator failure while the store boots, with the failing version; as
+/// [`boot_fault`].
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "passed to Result::map_err by name"
+)]
+pub(crate) fn migrate_fault(e: sqlx::migrate::MigrateError) -> StorageError {
+    StorageError::Internal(e.to_string())
+}
+
+/// A database fault as it travels on: its SQLSTATE, never the server's or
+/// the driver's sentence, which can carry statement positions, values and
+/// identifiers. The full error is logged here, where it enters.
+fn database_fault(e: &sqlx::Error) -> String {
+    // Debug, not Display: PostgreSQL's DETAIL, HINT and WHERE are only in it.
+    tracing::error!(error = ?e, "database error");
+    match e {
+        sqlx::Error::Database(db) => format!(
+            "database error (SQLSTATE {})",
+            db.code().as_deref().unwrap_or("unknown")
+        ),
+        sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed => {
+            "database connection pool unavailable".to_owned()
+        }
+        _ => "database driver error".to_owned(),
     }
 }
 
@@ -350,6 +438,41 @@ mod sqlstate_tests {
         assert!(matches!(mapped, StorageError::Unavailable(_)), "{mapped:?}");
         let other = map_err(sqlx::Error::Database(Box::new(Coded("XX000"))));
         assert!(matches!(other, StorageError::Internal(_)), "{other:?}");
+    }
+
+    /// #687: what travels on names the SQLSTATE, not the server's sentence.
+    #[test]
+    fn a_database_fault_carries_its_sqlstate_not_its_message() {
+        for code in ["XX000", "40P01", "53200", "22P05"] {
+            let text = map_err(sqlx::Error::Database(Box::new(Coded(code)))).to_string();
+            assert!(text.contains(code), "{text}");
+            assert!(!text.contains("out of shared memory"), "{text}");
+        }
+    }
+
+    /// #687: a constraint refusal names the constraint and its SQLSTATE, not
+    /// the server's sentence, which can carry values.
+    #[test]
+    fn a_constraint_refusal_names_its_sqlstate_not_its_sentence() {
+        let text = super::refused_by("unique constraint", &Coded("23505"));
+        assert!(
+            text.contains("unique constraint") && text.contains("23505"),
+            "{text}"
+        );
+        assert!(!text.contains("out of shared memory"), "{text}");
+    }
+
+    /// #687: a string the store cannot hold is the caller's input, never
+    /// an internal fault.
+    #[test]
+    fn an_unstorable_character_is_a_constraint_violation() {
+        for code in ["22P05", "22021"] {
+            let mapped = map_err(sqlx::Error::Database(Box::new(Coded(code))));
+            assert!(
+                matches!(mapped, StorageError::ConstraintViolation(_)),
+                "{mapped:?}"
+            );
+        }
     }
 }
 

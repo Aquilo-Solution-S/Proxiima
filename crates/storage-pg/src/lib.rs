@@ -34,7 +34,7 @@ pub use verbs::maintenance::{
     ObjectPurgePassOutcome, StuckPurgeDebt,
 };
 
-use crate::error::internal;
+use crate::error::{boot_fault, internal, migrate_fault};
 use crate::pgvector::set_hnsw_search_sql;
 
 #[doc(hidden)]
@@ -225,7 +225,7 @@ impl CoreSchemaState {
             sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
                 .fetch_one(&mut *connection)
                 .await
-                .map_err(internal)?;
+                .map_err(boot_fault)?;
         let rows: Vec<(i64, Vec<u8>, bool)> = if ledger_exists {
             sqlx::query_as(
                 "SELECT version, checksum, success FROM public._sqlx_migrations
@@ -234,7 +234,7 @@ impl CoreSchemaState {
             .bind(CORE_MIGRATION_VERSION_CEILING)
             .fetch_all(&mut *connection)
             .await
-            .map_err(internal)?
+            .map_err(boot_fault)?
         } else {
             Vec::new()
         };
@@ -248,7 +248,9 @@ impl CoreSchemaState {
         for (version, checksum, success) in rows {
             if version >= first_version {
                 if !success {
-                    return Err(internal(sqlx::migrate::MigrateError::Dirty(version)));
+                    return Err(internal(
+                        sqlx::migrate::MigrateError::Dirty(version).to_string(),
+                    ));
                 }
                 if let Some(migration) = migrator
                     .iter()
@@ -281,7 +283,7 @@ impl CoreSchemaState {
             .bind(baseline::EARLIER_SCHEMA_PREFIX)
             .fetch_one(&mut *connection)
             .await
-            .map_err(internal)?
+            .map_err(boot_fault)?
         };
         let ledger = baseline::classify(&ledger, has_schema, first_version)?;
         Ok(Self { migrator, ledger })
@@ -354,7 +356,7 @@ pub async fn run_core_migrations(
     core_migrator_for(vectors)
         .run_direct(None, &mut *connection, false)
         .await
-        .map_err(internal)?;
+        .map_err(migrate_fault)?;
     definitions::apply(connection, policy, vectors).await
 }
 
@@ -388,7 +390,7 @@ pub async fn run_core_schema(
         .bind(MIGRATION_LOCK_KEY)
         .execute(transaction.as_mut())
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     run_core_migrations(transaction, policy, vectors).await
 }
 
@@ -428,7 +430,7 @@ pub async fn ensure_core_schema_current(
     policy: MissingMigrationPolicy,
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
-    let mut connection = pool.acquire().await.map_err(internal)?.detach();
+    let mut connection = pool.acquire().await.map_err(boot_fault)?.detach();
     let mut transaction = begin_migration_transaction(&mut connection).await?;
     let result = async {
         let state = CoreSchemaState::read(&mut transaction, policy).await?;
@@ -458,7 +460,7 @@ pub async fn ensure_core_schema_current(
     }
     .await;
     if result.is_ok() {
-        transaction.commit().await.map_err(internal)?;
+        transaction.commit().await.map_err(boot_fault)?;
     }
     result
 }
@@ -496,7 +498,7 @@ async fn ensure_pgvector_runtime_compatible(
     pool: &PgPool,
     tuning: &PgTuning,
 ) -> Result<(), StorageError> {
-    let mut conn = pool.acquire().await.map_err(internal)?;
+    let mut conn = pool.acquire().await.map_err(boot_fault)?;
     ensure_pgvector_runtime_compatible_on(&mut conn, tuning).await
 }
 
@@ -510,7 +512,7 @@ async fn ensure_pgvector_runtime_compatible_on(
     )
     .fetch_optional(&mut *conn)
     .await
-    .map_err(internal)?
+    .map_err(boot_fault)?
     else {
         return Err(StorageError::Unavailable(
             "pgvector extension is required".into(),
@@ -633,16 +635,16 @@ async fn run_migrations_on_pool(
     tuning: &PgTuning,
     vectors: VectorStorage,
 ) -> Result<(), StorageError> {
-    let mut conn = pool.acquire().await.map_err(internal)?;
+    let mut conn = pool.acquire().await.map_err(boot_fault)?;
     // Schema migration disables the statement timeout for its session.
     sqlx::query("SET statement_timeout = 0")
         .execute(&mut *conn)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     let migrated = async {
         let mut transaction = begin_migration_transaction(&mut conn).await?;
         run_core_schema(&mut transaction, MissingMigrationPolicy::Reject, vectors).await?;
-        transaction.commit().await.map_err(internal)
+        transaction.commit().await.map_err(boot_fault)
     }
     .await;
     conn.detach();

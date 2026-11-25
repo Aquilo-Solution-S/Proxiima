@@ -207,7 +207,7 @@ impl PgSidecarReadCtx<'_> {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_optional(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_optional(connection).await,
         }
-        .map_err(|err| StorageError::Internal(err.to_string()))
+        .map_err(crate::error::map_err)
     }
 
     /// Fetch sidecar rows using a backend-owned, memory-id-bound query.
@@ -230,7 +230,7 @@ impl PgSidecarReadCtx<'_> {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
         }
-        .map_err(|err| StorageError::Internal(err.to_string()))
+        .map_err(crate::error::map_err)
     }
 
     /// Fetch owner-pinned sidecar rows.
@@ -263,7 +263,7 @@ impl PgSidecarReadCtx<'_> {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
         }
-        .map_err(|err| StorageError::Internal(err.to_string()))
+        .map_err(crate::error::map_err)
     }
 
     /// Fetch sidecar rows using a backend-owned, `ANY($1)` memory-id query.
@@ -290,7 +290,7 @@ impl PgSidecarReadCtx<'_> {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_all(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_all(connection).await,
         }
-        .map_err(|err| StorageError::Internal(err.to_string()))
+        .map_err(crate::error::map_err)
     }
 
     /// Fetch one scalar sidecar value using a backend-owned, memory-id-bound query.
@@ -313,7 +313,7 @@ impl PgSidecarReadCtx<'_> {
             PgSidecarReadExecutor::Pool(pool) => query.fetch_optional(pool).await,
             PgSidecarReadExecutor::Connection(connection) => query.fetch_optional(connection).await,
         }
-        .map_err(|err| StorageError::Internal(err.to_string()))
+        .map_err(crate::error::map_err)
     }
 }
 

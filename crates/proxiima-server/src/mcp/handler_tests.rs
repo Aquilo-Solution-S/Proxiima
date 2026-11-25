@@ -1213,6 +1213,26 @@ fn nul_in_an_argument_name_is_rejected() {
     let err = reject_nul_in_args(&serde_json::Value::Object(map))
         .expect_err("NUL in a key must be rejected");
     assert!(err.message.contains("argument names"), "{}", err.message);
+    assert!(err.message.contains(r#""/na\u0000me""#), "{}", err.message);
+}
+
+/// #687: the refusal names the string as a JSON Pointer, so the caller can
+/// strip or skip exactly that string.
+#[test]
+fn nul_refusal_names_the_string_it_found() {
+    for (args, pointer) in [
+        (
+            serde_json::json!({ "payload": { "pages": ["fine", "a\u{0}b"] } }),
+            r#""/payload/pages/1""#,
+        ),
+        (
+            serde_json::json!({ "payload": { "a/b~c": "a\u{0}b" } }),
+            r#""/payload/a~1b~0c""#,
+        ),
+    ] {
+        let err = reject_nul_in_args(&args).expect_err("NUL must be rejected");
+        assert!(err.message.contains(pointer), "{}", err.message);
+    }
 }
 
 /// The check must not reject ordinary arguments, including other

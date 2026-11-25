@@ -4575,7 +4575,7 @@ async fn a_cited_blob_is_held_against_a_concurrent_citation() {
             .await
             .expect_err("a citation of a held blob must wait, not land");
         assert!(
-            err.to_string().contains("statement timeout"),
+            err.to_string().contains("SQLSTATE 57014"),
             "the citation should have blocked on the erase's row lock until the \
              statement timeout cancelled it; instead it failed with {err}"
         );

@@ -372,7 +372,7 @@ async fn nul_validation_preserves_host_auth_and_unknown_tool_priority() {
     assert!(matches!(
         server.call_tool("core_memory_spaces", args, author, Some(auth)).await,
         Err(ToolInvocationError::Tool(ToolError::InvalidInput(message)))
-            if message == "arguments must not contain NUL (U+0000)"
+            if message == r#"arguments must not contain NUL (U+0000): "/value""#
     ));
 }
 

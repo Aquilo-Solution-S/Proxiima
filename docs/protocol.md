@@ -238,6 +238,16 @@ MCP tools return the shared structured tool error; resource parameter errors
 name the parameter. An unknown resource and a missing or invisible entity
 return a resource-not-found error. The negotiated MCP revision controls wire
 error-code compatibility. Internal errors redact source chains and credentials.
+No PostgreSQL or driver sentence reaches a caller: a constraint refusal names
+the constraint and its SQLSTATE, a core SQL refusal or backstop keeps core's own
+sentence, any other database fault only its SQLSTATE, and the server logs the
+full error.
+
+PostgreSQL stores U+0000 in neither `text` nor `jsonb`. A tool argument
+holding it in any string or key is refused as invalid input naming the string's
+JSON Pointer, before the tool runs; strip or skip it. A host writing through
+the engine directly gets the same class, without the pointer, from the
+database's refusal, and nothing is written.
 
 A tool that ran and failed answers MCP's tool-execution error, not a JSON-RPC
 error: a result with `isError: true` whose content is the tool's own text. A

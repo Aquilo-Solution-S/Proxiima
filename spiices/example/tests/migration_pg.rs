@@ -142,7 +142,7 @@ async fn register_host_notebook(
         .expect_err("the owner policy refuses writing another owner's row");
     assert!(
         matches!(&refused, proxiima::StorageError::Internal(message)
-            if message.contains("row-level security policy")),
+            if message.contains("SQLSTATE 42501")),
         "{refused:?}"
     );
     drop(tx);

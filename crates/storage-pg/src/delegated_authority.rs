@@ -12,7 +12,7 @@ use sqlx::{FromRow as _, Row as _};
 use time::OffsetDateTime;
 
 use crate::access::role_columns::RoleColumns;
-use crate::error::{internal, map_err};
+use crate::error::map_err;
 
 /// Backend adapter used by the runtime-composed delegated-authority service.
 #[doc(hidden)]
@@ -142,40 +142,40 @@ fn decode_grant(
     permit: &DelegationMutationPermit,
     row: &sqlx::postgres::PgRow,
 ) -> Result<DelegationGrant, StorageError> {
-    let owner_id: uuid::Uuid = row.try_get("owner_id").map_err(internal)?;
+    let owner_id: uuid::Uuid = row.try_get("owner_id").map_err(map_err)?;
     let owner = OwnerId::new(owner_id);
-    let role_ceiling = RoleColumns::from_row(row).map_err(internal)?.role()?;
+    let role_ceiling = RoleColumns::from_row(row).map_err(map_err)?.role()?;
 
     DelegationGrant::from_storage(
         permit,
         &DelegationGrantStorage {
-            delegation_id: DelegationId::from_uuid(row.try_get("delegation_id").map_err(internal)?),
-            subject: UserId::new(row.try_get("subject_user_id").map_err(internal)?),
+            delegation_id: DelegationId::from_uuid(row.try_get("delegation_id").map_err(map_err)?),
+            subject: UserId::new(row.try_get("subject_user_id").map_err(map_err)?),
             owner,
             writer: proxiima_core::WriterAttribution {
-                by: row.try_get("by").map_err(internal)?,
-                via: row.try_get("via").map_err(internal)?,
+                by: row.try_get("by").map_err(map_err)?,
+                via: row.try_get("via").map_err(map_err)?,
             },
-            tool: row.try_get::<String, _>("tool_name").map_err(internal)?,
+            tool: row.try_get::<String, _>("tool_name").map_err(map_err)?,
             action: row
                 .try_get::<Option<String>, _>("action_name")
-                .map_err(internal)?,
+                .map_err(map_err)?,
             role_ceiling,
             expires_at: SystemTime::from(
                 row.try_get::<OffsetDateTime, _>("expires_at")
-                    .map_err(internal)?,
+                    .map_err(map_err)?,
             ),
             issued_at: SystemTime::from(
                 row.try_get::<OffsetDateTime, _>("issued_at")
-                    .map_err(internal)?,
+                    .map_err(map_err)?,
             ),
             revoked_at: row
                 .try_get::<Option<OffsetDateTime>, _>("revoked_at")
-                .map_err(internal)?
+                .map_err(map_err)?
                 .map(SystemTime::from),
             revoked_by: row
                 .try_get::<Option<uuid::Uuid>, _>("revoked_by_user_id")
-                .map_err(internal)?
+                .map_err(map_err)?
                 .map(UserId::new),
         },
     )

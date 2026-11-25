@@ -2700,7 +2700,7 @@ mod pg_tests {
                 derived_request(owner, &[origin], "atomic conclusion".into())?,
             ).await;
             let error = refused.expect_err("the job trigger must refuse this admission");
-            assert!(error.message.contains("job insertion refused"), "{error}");
+            assert!(error.message.contains("SQLSTATE P0001"), "{error}");
             let after: (i64, i64, i64, i64) = sqlx::query_as(
                 "SELECT (SELECT count(*) FROM proxiima_core.memory),
                         (SELECT count(*) FROM proxiima_core.agent_derivation_v1),

@@ -1058,10 +1058,7 @@ async fn an_aborted_owner_erase_keeps_the_forgotten_row() {
             .erase_personal_owner(&auth, user, &contract_sidecar_tables())
             .await
             .expect_err("the injected refusal aborts the erase");
-        assert!(
-            err.to_string().contains("injected erase refusal"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("SQLSTATE P0001"), "got: {err}");
 
         let kept: i64 = sqlx::query_scalar(
             "SELECT count(*)::bigint FROM proxiima_core.memory

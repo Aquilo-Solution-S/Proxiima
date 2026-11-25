@@ -791,29 +791,43 @@ fn host_tool_name_refusal(
 ///
 /// # Errors
 ///
-/// [`ToolError::InvalidInput`] naming whether a value or a key held NUL.
+/// [`ToolError::InvalidInput`] naming whether a value or a key held NUL, and
+/// where: an RFC 6901 JSON Pointer into the arguments, JSON-quoted so a NUL
+/// in a key prints as `\u0000` and cannot be confused with literal text.
 pub fn reject_nul_in_args(args: &serde_json::Value) -> Result<(), ToolError> {
+    fn child(pointer: &str, segment: &str) -> String {
+        format!(
+            "{pointer}/{}",
+            segment.replace('~', "~0").replace('/', "~1")
+        )
+    }
+    fn refused(what: &str, pointer: &str) -> ToolError {
+        let quoted = serde_json::Value::String(pointer.to_owned()).to_string();
+        ToolError::InvalidInput(format!("{what} must not contain NUL (U+0000): {quoted}"))
+    }
     // An explicit worklist keeps the validator stack-safe independently of
     // serde_json's parser depth limit, including direct host callers.
-    let mut stack = vec![args];
-    while let Some(value) = stack.pop() {
+    let mut stack = vec![(args, String::new())];
+    while let Some((value, pointer)) = stack.pop() {
         match value {
             serde_json::Value::String(text) => {
                 if text.contains('\0') {
-                    return Err(ToolError::InvalidInput(
-                        "arguments must not contain NUL (U+0000)".to_string(),
-                    ));
+                    return Err(refused("arguments", &pointer));
                 }
             }
-            serde_json::Value::Array(items) => stack.extend(items.iter()),
+            serde_json::Value::Array(items) => stack.extend(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| (item, child(&pointer, &index.to_string()))),
+            ),
             serde_json::Value::Object(map) => {
                 for (key, item) in map {
+                    let at = child(&pointer, key);
                     if key.contains('\0') {
-                        return Err(ToolError::InvalidInput(
-                            "argument names must not contain NUL (U+0000)".to_string(),
-                        ));
+                        return Err(refused("argument names", &at));
                     }
-                    stack.push(item);
+                    stack.push((item, at));
                 }
             }
             serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {

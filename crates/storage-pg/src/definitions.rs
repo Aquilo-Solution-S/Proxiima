@@ -5,7 +5,7 @@ use sha2::{Digest, Sha384};
 use sqlx::PgConnection;
 
 use crate::VectorStorage;
-use crate::error::internal;
+use crate::error::boot_fault;
 
 pub const FUNCTIONS: &str = include_str!("../definitions/functions.sql");
 pub const TRIGGERS: &str = include_str!("../definitions/triggers.sql");
@@ -124,7 +124,7 @@ impl AppliedDefinitions {
         )
         .fetch_one(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
         if !exists {
             return Ok(None);
         }
@@ -132,7 +132,7 @@ impl AppliedDefinitions {
             sqlx::query_as("SELECT checksum, release FROM proxiima_core.definitions_applied()")
                 .fetch_optional(&mut *connection)
                 .await
-                .map_err(internal)?;
+                .map_err(boot_fault)?;
         let Some((checksum, release)) = record else {
             return Ok(None);
         };
@@ -209,16 +209,16 @@ pub(crate) async fn apply(
     sqlx::raw_sql(LOCK_CORE_TABLES_SQL)
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     sqlx::query("SET LOCAL check_function_bodies = off")
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     for sql in files(vectors) {
         sqlx::raw_sql(sql)
             .execute(&mut *connection)
             .await
-            .map_err(internal)?;
+            .map_err(boot_fault)?;
     }
     let mut record = SqlText::new(
         "CREATE OR REPLACE FUNCTION proxiima_core.definitions_applied()
@@ -233,7 +233,7 @@ pub(crate) async fn apply(
     sqlx::raw_sql(record)
         .execute(&mut *connection)
         .await
-        .map_err(internal)?;
+        .map_err(boot_fault)?;
     Ok(())
 }
 

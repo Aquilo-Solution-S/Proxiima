@@ -1228,7 +1228,7 @@ pub(crate) async fn read_memory_by_t(
     .bind(t)
     .fetch_optional(tx.as_mut())
     .await
-    .map_err(internal)
+    .map_err(map_err)
 }
 
 /// Read a series' current head row, inside the caller's transaction.
@@ -1248,7 +1248,7 @@ pub(crate) async fn read_memory_head(
     .bind(handle)
     .fetch_optional(tx.as_mut())
     .await
-    .map_err(internal)
+    .map_err(map_err)
 }
 
 // The admission-row suite. Crate-internal for the same reason the verb is:
