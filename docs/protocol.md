@@ -138,6 +138,9 @@ An other-store search carries the caller's filters and requested mode through
 `RemoteSearch`. Each store resolves its own embedding availability and returns
 `RemoteSearchResult`, including whether it fell back to lexical even when it
 found no hits. The merged answer reports a fallback if any answer did.
+Requested bodies and one-hop edges are returned for other stores' hits as for
+local hits; a store that cannot serve them is listed in `unanswered`. Another
+store's edges stay only while they touch one of its own hits on the merged page.
 
 A store that cannot honor the request returns `UnsupportedSearch`; it is
 reported in `unanswered` as `{store, why}`, where `why` is that error,

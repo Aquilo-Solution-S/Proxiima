@@ -158,12 +158,14 @@ impl proxiima::host::OtherStores for ForwardTo {
                         snippet: hit.to_string(),
                         created_at: time::OffsetDateTime::UNIX_EPOCH,
                         tags: Vec::new(),
+                        body: None,
                         citation: None,
                     })
                 })
                 .collect();
             Ok(proxiima::host::RemoteSearchResult {
                 hits,
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })

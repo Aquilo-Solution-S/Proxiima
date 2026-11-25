@@ -97,8 +97,11 @@ fn another_stores_hit_names_the_owner_its_store_reported() {
             snippet: "stored remote note".into(),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             tags: Vec::new(),
+            body: None,
             citation: None,
         },
+        false,
+        crate::MAX_TEXT_CAP_CHARS,
     );
     let wire = serde_json::to_value(&hit).expect("wire output");
     assert_eq!(wire["space"], serde_json::json!(owner.to_string()));
@@ -155,8 +158,11 @@ fn local_and_remote_search_outputs_keep_the_recorded_writer() {
                 snippet: "stored remote note".into(),
                 created_at: time::OffsetDateTime::UNIX_EPOCH,
                 tags: Vec::new(),
+                body: None,
                 citation: None,
             },
+            false,
+            crate::MAX_TEXT_CAP_CHARS,
         );
         for output in [local, remote] {
             let wire = serde_json::to_value(output).expect("wire output");
@@ -217,8 +223,11 @@ fn a_citing_hit_names_its_cited_object_and_an_uncited_hit_has_no_citation() {
                 snippet: "stored remote note".into(),
                 created_at: time::OffsetDateTime::UNIX_EPOCH,
                 tags: Vec::new(),
+                body: None,
                 citation,
             },
+            false,
+            crate::MAX_TEXT_CAP_CHARS,
         )
     };
     let expected = serde_json::json!({
@@ -596,8 +605,9 @@ mod other_stores {
     };
     use crate::Tool;
     use crate::storage_ports::other_stores::{
-        OtherStores, OtherStoresError, OtherStoresService, RemoteHit, RemoteRead, RemoteSearch,
-        RemoteSearchResult, StoreCaller, StoreInfo,
+        OtherStores, OtherStoresError, OtherStoresService, RemoteBody, RemoteEdge,
+        RemoteEdgeTarget, RemoteHit, RemoteRead, RemoteSearch, RemoteSearchResult, StoreCaller,
+        StoreInfo,
     };
     use crate::verbs::query::{EntityKind, SearchMode, SearchOrder, SupersessionStatus, TagMatch};
 
@@ -639,7 +649,30 @@ mod other_stores {
             snippet: String::new(),
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             tags: Vec::new(),
+            body: None,
             citation: None,
+        }
+    }
+
+    fn remote_request(limit: u32, order: SearchOrder) -> RemoteSearch {
+        RemoteSearch {
+            query: Some("needle".into()),
+            limit,
+            kind: None,
+            schema_id: None,
+            exclude_schema_ids: Vec::new(),
+            tags: Vec::new(),
+            tag_match: TagMatch::Any,
+            mode: SearchMode::Lexical,
+            since: None,
+            until: None,
+            order,
+            supersession: SupersessionStatus::HeadsOnly,
+            min_score: None,
+            semantic_weight: None,
+            include_body: false,
+            body_max_chars: crate::MAX_TEXT_CAP_CHARS,
+            include_neighbor_edges: false,
         }
     }
 
@@ -673,6 +706,7 @@ mod other_stores {
                     RemoteSearchResult {
                         hits: wiki,
                         degraded_to_lexical: false,
+                        neighbor_edges: Vec::new(),
                     },
                 ),
                 (
@@ -680,6 +714,7 @@ mod other_stores {
                     RemoteSearchResult {
                         hits: crm,
                         degraded_to_lexical: false,
+                        neighbor_edges: Vec::new(),
                     },
                 ),
             ],
@@ -687,8 +722,7 @@ mod other_stores {
                 store: 3,
                 why: "deadline has elapsed".into(),
             }],
-            4,
-            SearchOrder::Relevance,
+            &remote_request(4, SearchOrder::Relevance),
             0,
         );
         let order: Vec<&str> = output
@@ -744,6 +778,7 @@ mod other_stores {
                     RemoteSearchResult {
                         hits: wiki,
                         degraded_to_lexical: false,
+                        neighbor_edges: Vec::new(),
                     },
                 ),
                 (
@@ -751,12 +786,12 @@ mod other_stores {
                     RemoteSearchResult {
                         hits: vec![crm],
                         degraded_to_lexical: false,
+                        neighbor_edges: Vec::new(),
                     },
                 ),
             ],
             Vec::new(),
-            4,
-            SearchOrder::Recency,
+            &remote_request(4, SearchOrder::Recency),
             0,
         );
         assert_eq!(
@@ -802,11 +837,11 @@ mod other_stores {
                 RemoteSearchResult {
                     hits: vec![remote],
                     degraded_to_lexical: false,
+                    neighbor_edges: Vec::new(),
                 },
             )],
             Vec::new(),
-            1,
-            SearchOrder::Recency,
+            &remote_request(1, SearchOrder::Recency),
             0,
         );
         assert_eq!(output.memories[0].memory_id, remote_id);
@@ -924,6 +959,7 @@ mod other_stores {
             let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
                 hits: Vec::new(),
                 degraded_to_lexical: false,
+                neighbor_edges: Vec::new(),
             })));
             let mut request = remote_args(mode);
             request.limit = 100;
@@ -945,6 +981,9 @@ mod other_stores {
             request.supersession = SearchMemoriesSupersession::All;
             request.min_score = Some(0.4);
             request.semantic_weight = matches!(mode, SearchMemoriesMode::Hybrid).then_some(0.7);
+            request.include_body = matches!(mode, SearchMemoriesMode::Hybrid);
+            request.include_neighbor_edges = request.include_body;
+            request.body_max_chars = request.include_body.then_some(3);
             let semantic_weight = request.semantic_weight;
             SearchMemoriesTool::call(remote_ctx(&port), request)
                 .await
@@ -966,6 +1005,13 @@ mod other_stores {
                     supersession: SupersessionStatus::IncludeSuperseded,
                     min_score: Some(0.4),
                     semantic_weight,
+                    include_body: matches!(mode, SearchMemoriesMode::Hybrid),
+                    body_max_chars: if matches!(mode, SearchMemoriesMode::Hybrid) {
+                        3
+                    } else {
+                        crate::MAX_TEXT_CAP_CHARS
+                    },
+                    include_neighbor_edges: matches!(mode, SearchMemoriesMode::Hybrid),
                 }]
             );
         }
@@ -976,6 +1022,7 @@ mod other_stores {
         let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
             hits: vec![remote_hit(1)],
             degraded_to_lexical: false,
+            neighbor_edges: Vec::new(),
         })));
         let mut request = remote_args(SearchMemoriesMode::Lexical);
         request.query = None;
@@ -998,6 +1045,152 @@ mod other_stores {
     }
 
     #[tokio::test]
+    async fn remote_body_is_capped_and_absent_when_not_requested() {
+        let mut hit = remote_hit(1);
+        hit.body = Some(RemoteBody {
+            text: "αβγδεζ".into(),
+            truncated: false,
+        });
+        let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
+            hits: vec![hit],
+            degraded_to_lexical: false,
+            neighbor_edges: Vec::new(),
+        })));
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.include_body = true;
+        request.body_max_chars = Some(3);
+        let output = SearchMemoriesTool::call(remote_ctx(&port), request)
+            .await
+            .expect("remote body reaches output");
+        assert_eq!(output.memories[0].body.as_deref(), Some("αβγ"));
+        assert_eq!(output.memories[0].body_truncated, Some(true));
+
+        let mut hit = remote_hit(1);
+        hit.body = Some(RemoteBody {
+            text: "αβ".into(),
+            truncated: true,
+        });
+        let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
+            hits: vec![hit],
+            degraded_to_lexical: false,
+            neighbor_edges: Vec::new(),
+        })));
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.include_body = true;
+        request.body_max_chars = Some(3);
+        let output = SearchMemoriesTool::call(remote_ctx(&port), request)
+            .await
+            .expect("upstream truncation reaches output");
+        assert_eq!(output.memories[0].body.as_deref(), Some("αβ"));
+        assert_eq!(output.memories[0].body_truncated, Some(true));
+
+        let mut hit = remote_hit(1);
+        hit.body = Some(RemoteBody {
+            text: "αβγ".into(),
+            truncated: false,
+        });
+        let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
+            hits: vec![hit],
+            degraded_to_lexical: false,
+            neighbor_edges: Vec::new(),
+        })));
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.include_body = true;
+        request.body_max_chars = Some(3);
+        let output = SearchMemoriesTool::call(remote_ctx(&port), request)
+            .await
+            .expect("a body at the cap is whole");
+        assert_eq!(output.memories[0].body.as_deref(), Some("αβγ"));
+        assert_eq!(output.memories[0].body_truncated, Some(false));
+
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.include_body = false;
+        let output = SearchMemoriesTool::call(remote_ctx(&port), request)
+            .await
+            .expect("remote body can be omitted");
+        assert_eq!(output.memories[0].body, None);
+        assert_eq!(output.memories[0].body_truncated, None);
+    }
+
+    #[test]
+    fn a_stores_edges_follow_its_own_surviving_hits() {
+        for include_neighbor_edges in [true, false] {
+            let local = local_hit();
+            let local_id = local.memory_id;
+            let (first, second) = (remote_hit(1), remote_hit(1));
+            let (first_id, second_id) = (first.handle, second.handle);
+            let edge = |source, target| RemoteEdge {
+                source,
+                target,
+                kind: crate::EdgeKind::Reference,
+            };
+            let mut output = SearchMemoriesOutput {
+                mode: Some(SearchMode::Lexical),
+                degraded_to_lexical: false,
+                ranking: SearchRanking::Score,
+                memories: vec![local],
+                neighbor_edges: Vec::new(),
+                next_cursor: None,
+                has_more: false,
+                unanswered: None,
+                inventory_unanswered: None,
+            };
+            let request = RemoteSearch {
+                include_neighbor_edges,
+                ..remote_request(2, SearchOrder::Relevance)
+            };
+            merge_store_hits(
+                &mut output,
+                vec![(
+                    1,
+                    RemoteSearchResult {
+                        hits: vec![first, second],
+                        degraded_to_lexical: false,
+                        neighbor_edges: vec![
+                            edge(first_id, RemoteEdgeTarget::Redacted),
+                            edge(second_id, RemoteEdgeTarget::Visible(first_id)),
+                            edge(second_id, RemoteEdgeTarget::Redacted),
+                            edge(second_id, RemoteEdgeTarget::Visible(local_id)),
+                        ],
+                    },
+                )],
+                Vec::new(),
+                &request,
+                0,
+            );
+            let mut kept: Vec<_> = output.memories.iter().map(|hit| hit.memory_id).collect();
+            let mut expected_kept = vec![local_id, first_id];
+            kept.sort_unstable();
+            expected_kept.sort_unstable();
+            assert_eq!(kept, expected_kept, "the limit cuts `second`");
+            let edges: Vec<_> = output
+                .neighbor_edges
+                .iter()
+                .map(|edge| (edge.source.clone(), edge.target.clone(), edge.kind))
+                .collect();
+            let expected = if include_neighbor_edges {
+                // Out of and into a kept hit of store 1 stay; an edge of the
+                // cut hit, and store 1's edge onto store 0's hit, go.
+                vec![
+                    (
+                        first_id.to_string(),
+                        "redacted target".to_owned(),
+                        crate::EdgeKind::Reference,
+                    ),
+                    (
+                        second_id.to_string(),
+                        first_id.to_string(),
+                        crate::EdgeKind::Reference,
+                    ),
+                ]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(edges, expected);
+        }
+    }
+
+    #[tokio::test]
     async fn invalid_remote_only_timestamps_are_refused_before_any_port_call() {
         for (since, until, field) in [
             (Some("not-a-time".into()), None, "since"),
@@ -1006,6 +1199,7 @@ mod other_stores {
             let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
                 hits: Vec::new(),
                 degraded_to_lexical: false,
+                neighbor_edges: Vec::new(),
             })));
             let mut request = remote_args(SearchMemoriesMode::Lexical);
             request.since = since;
@@ -1028,6 +1222,7 @@ mod other_stores {
             let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
                 hits,
                 degraded_to_lexical: true,
+                neighbor_edges: Vec::new(),
             })));
             let mut request = remote_args(SearchMemoriesMode::Hybrid);
             request.limit = 1;
@@ -1072,6 +1267,31 @@ mod other_stores {
 
     struct TwoStores;
 
+    #[tokio::test]
+    async fn unsupported_body_or_edges_leave_one_store_unanswered() {
+        let ctx = super::super::super::memory_spaces::test_ctx::ctx_for(
+            crate::UserId::new(uuid::Uuid::now_v7()),
+            Vec::new(),
+        );
+        let mut ctx = ctx;
+        ctx.try_insert_service(OtherStoresService::new(Arc::new(TwoStores)))
+            .expect("service slot is empty");
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.stores = Some(vec![1, 2]);
+        request.include_body = true;
+        request.include_neighbor_edges = true;
+        let output = SearchMemoriesTool::call(ctx, request).await.unwrap();
+        assert_eq!(output.memories.len(), 1);
+        assert_eq!(output.memories[0].store, Some(2));
+        assert_eq!(
+            output.unanswered,
+            Some(vec![UnansweredStore {
+                store: 1,
+                why: "store cannot honor search: body and edges".into(),
+            }])
+        );
+    }
+
     impl OtherStores for TwoStores {
         fn stores<'a>(
             &'a self,
@@ -1097,13 +1317,17 @@ mod other_stores {
         fn search<'a>(
             &'a self,
             _caller: StoreCaller<'a>,
-            _store: u16,
+            store: u16,
             _args: &'a RemoteSearch,
         ) -> BoxFuture<'a, Result<RemoteSearchResult, OtherStoresError>> {
-            Box::pin(async {
+            Box::pin(async move {
+                if store == 1 {
+                    return Err(OtherStoresError::UnsupportedSearch("body and edges".into()));
+                }
                 Ok(RemoteSearchResult {
-                    hits: Vec::new(),
+                    hits: vec![remote_hit(2)],
                     degraded_to_lexical: false,
+                    neighbor_edges: Vec::new(),
                 })
             })
         }

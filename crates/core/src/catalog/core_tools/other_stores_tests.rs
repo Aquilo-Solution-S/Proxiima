@@ -3,8 +3,8 @@ use crate::UserId;
 use crate::catalog::core_tools::memory::derive::MAX_SOURCE_HANDLES;
 use crate::catalog::core_tools::memory_spaces::test_ctx::ctx_for;
 use crate::storage_ports::other_stores::{
-    OtherStores, RemoteEdgeTarget, RemoteHit, RemoteLineageEdge, RemoteLineageNode, RemoteRead,
-    StoreInfo,
+    OtherStores, RemoteEdge, RemoteEdgeTarget, RemoteHit, RemoteLineageEdge, RemoteLineageNode,
+    RemoteRead, StoreInfo,
 };
 use futures::future::BoxFuture;
 
@@ -22,10 +22,12 @@ fn a_search_response_must_carry_the_requested_store_number() {
         snippet: "remote result".into(),
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         tags: Vec::new(),
+        body: None,
         citation: None,
     };
     let reply = RemoteSearchResult {
         hits: vec![hit],
+        neighbor_edges: Vec::new(),
         degraded_to_lexical: true,
     };
     assert_eq!(
@@ -33,7 +35,21 @@ fn a_search_response_must_carry_the_requested_store_number() {
         reply
     );
     assert!(matches!(
-        checked_remote_hits(3, reply),
+        checked_remote_hits(3, reply.clone()),
+        Err(OtherStoresError::Unavailable(_))
+    ));
+    let edge = |source| RemoteEdge {
+        source,
+        target: RemoteEdgeTarget::Redacted,
+        kind: crate::EdgeKind::Reference,
+    };
+    let mut own = reply.clone();
+    own.neighbor_edges = vec![edge(reply.hits[0].handle)];
+    assert_eq!(checked_remote_hits(2, own.clone()), Ok(own));
+    let mut stray = reply;
+    stray.neighbor_edges = vec![edge(crate::new_memory_uuid(2))];
+    assert!(matches!(
+        checked_remote_hits(2, stray),
         Err(OtherStoresError::Unavailable(_))
     ));
 }
@@ -84,6 +100,7 @@ impl OtherStores for InventoryPort {
             self.searches.lock().expect("search calls").push(store);
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })
@@ -216,6 +233,9 @@ async fn valid_inventories_route_each_selected_remote_once_in_request_order() {
             supersession: crate::verbs::query::SupersessionStatus::HeadsOnly,
             min_score: None,
             semantic_weight: None,
+            include_body: false,
+            body_max_chars: crate::MAX_TEXT_CAP_CHARS,
+            include_neighbor_edges: false,
         };
         let (answered, unanswered) = search_remotes(
             &ctx,
@@ -309,6 +329,7 @@ impl OtherStores for SlowOriginStore {
         Box::pin(async {
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })
@@ -379,6 +400,7 @@ impl OtherStores for ReadReplyStore {
         Box::pin(async {
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })

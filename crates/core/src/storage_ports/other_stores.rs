@@ -133,6 +133,13 @@ pub struct RemoteSearch {
     pub supersession: SupersessionStatus,
     pub min_score: Option<f32>,
     pub semantic_weight: Option<f32>,
+    /// Return each hit's body when requested.
+    pub include_body: bool,
+    /// Effective cap for requested bodies in Unicode scalar values (Rust
+    /// `char`s), resolved by core.
+    pub body_max_chars: usize,
+    /// Return one-hop edges touching this store's hits when requested.
+    pub include_neighbor_edges: bool,
 }
 
 /// One store's answer, including lexical fallback even when it found no hits.
@@ -141,12 +148,21 @@ pub struct RemoteSearch {
 ///
 /// ```compile_fail,E0063
 /// use proxiima_core::storage_ports::other_stores::RemoteSearchResult;
-/// let _ = RemoteSearchResult { hits: Vec::new() };
+/// let _ = RemoteSearchResult { hits: Vec::new(), neighbor_edges: Vec::new() };
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemoteSearchResult {
     pub hits: Vec<RemoteHit>,
+    /// One-hop edges, each touching one of `hits`; empty unless requested.
+    pub neighbor_edges: Vec<RemoteEdge>,
     pub degraded_to_lexical: bool,
+}
+
+/// A requested remote body, with whether the store truncated its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteBody {
+    pub text: String,
+    pub truncated: bool,
 }
 
 /// One remote search hit, in the requested order within its store.
@@ -159,6 +175,8 @@ pub struct RemoteHit {
     pub kind: EntityKind,
     pub schema_id: String,
     pub snippet: String,
+    /// Present only when the search requested a body.
+    pub body: Option<RemoteBody>,
     pub created_at: time::OffsetDateTime,
     pub tags: Vec<String>,
     /// The object the hit cites, when it is a Fact that cites one.
@@ -295,8 +313,8 @@ pub enum RemoteEdgeTarget {
     Erased,
 }
 
-/// One edge touching a remote memory, as a `proxiima://memory/{id}` read
-/// with `expand_neighbors` lists it in the owning store.
+/// One edge touching a remote memory, as the owning store admits it to
+/// the caller for a search or a read with `expand_neighbors`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteEdge {
     pub source: Uuid,
@@ -306,7 +324,7 @@ pub struct RemoteEdge {
 
 impl RemoteEdge {
     /// One hop from `memory`: either end is the memory itself.
-    fn touches(&self, memory: Uuid) -> bool {
+    pub(crate) fn touches(&self, memory: Uuid) -> bool {
         self.source == memory || self.target == RemoteEdgeTarget::Visible(memory)
     }
 }
@@ -422,8 +440,9 @@ pub trait OtherStores: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<StoreInfo>, OtherStoresError>>;
 
     /// Search one store as `caller`, in the requested order. Every supplied
-    /// filter and score option, including an optional `query` and
-    /// `exclude_schema_ids`, must be honored or refused with
+    /// filter, score and output option, including an optional `query`,
+    /// `exclude_schema_ids`, `include_body`, `body_max_chars` and
+    /// `include_neighbor_edges`, must be honored or refused with
     /// [`OtherStoresError::UnsupportedSearch`]; never retry a weaker request.
     fn search<'a>(
         &'a self,

@@ -369,6 +369,9 @@ impl Tool for SearchMemoriesTool {
                     supersession: SupersessionStatus::from(args.supersession),
                     min_score: args.min_score,
                     semantic_weight: args.semantic_weight,
+                    include_body: args.include_body,
+                    body_max_chars: effective_body_max_chars(args.body_max_chars),
+                    include_neighbor_edges: args.include_neighbor_edges,
                 };
                 let (answered, unanswered) = super::other_stores::search_remotes(
                     &ctx,
@@ -385,8 +388,7 @@ impl Tool for SearchMemoriesTool {
                     &mut output,
                     answered,
                     unanswered,
-                    remote.limit,
-                    args.order,
+                    &remote,
                     ctx.engine().store_number(),
                 );
             }
@@ -470,8 +472,7 @@ fn merge_store_hits(
     output: &mut SearchMemoriesOutput,
     answered: Vec<(u16, crate::storage_ports::other_stores::RemoteSearchResult)>,
     unanswered: Vec<UnansweredStore>,
-    limit: u32,
-    order: SearchOrder,
+    request: &crate::storage_ports::other_stores::RemoteSearch,
     local_number: u16,
 ) {
     let local = std::mem::take(&mut output.memories);
@@ -484,29 +485,49 @@ fn merge_store_hits(
             })
             .collect::<Vec<_>>(),
     ];
+    let mut remote_edges = Vec::new();
     for (store, result) in answered {
         output.degraded_to_lexical |= result.degraded_to_lexical;
+        if request.include_neighbor_edges {
+            remote_edges.extend(result.neighbor_edges.into_iter().map(|edge| (store, edge)));
+        }
         lists.push(
             result
                 .hits
                 .into_iter()
-                .map(|hit| remote_hit_output(store, hit))
+                .map(|hit| {
+                    remote_hit_output(store, hit, request.include_body, request.body_max_chars)
+                })
                 .collect(),
         );
     }
     let mut merged = crate::storage_ports::other_stores::rrf_merge(lists);
-    match order {
+    match request.order {
         SearchOrder::Relevance => {}
         SearchOrder::Recency => merged.sort_by_key(|(hit, _)| std::cmp::Reverse(hit.created_at)),
     }
     output.memories = merged
         .into_iter()
-        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+        .take(usize::try_from(request.limit).unwrap_or(usize::MAX))
         .map(|(mut hit, score)| {
             hit.score = if output.mode.is_none() { 0.0 } else { score };
             hit
         })
         .collect();
+    // A store's edge stays while it touches a hit of that store the page kept.
+    let kept = remote_edges.into_iter().filter(|(store, edge)| {
+        output
+            .memories
+            .iter()
+            .any(|hit| hit.store == Some(*store) && edge.touches(hit.memory_id))
+    });
+    output
+        .neighbor_edges
+        .extend(kept.map(|(_, edge)| NeighborEdge {
+            source: edge.source.to_string(),
+            target: super::wire_ref::format_remote_target(edge.target),
+            kind: edge.kind,
+        }));
     retain_surviving_neighbor_edges(&output.memories, &mut output.neighbor_edges);
     output.ranking = if output.mode.is_none() {
         SearchRanking::Score
@@ -519,7 +540,16 @@ fn merge_store_hits(
 fn remote_hit_output(
     store: u16,
     hit: crate::storage_ports::other_stores::RemoteHit,
+    include_body: bool,
+    body_max_chars: usize,
 ) -> SearchMemoryOutput {
+    let (body, body_truncated) = match hit.body.filter(|_| include_body) {
+        Some(body) => {
+            let (text, cut_here) = truncate_body(&body.text, body_max_chars);
+            (Some(text), Some(body.truncated || cut_here))
+        }
+        None => (None, None),
+    };
     SearchMemoryOutput {
         memory_id: hit.handle,
         memory: hit.handle.to_string(),
@@ -538,8 +568,8 @@ fn remote_hit_output(
         lexical_score: 0.0,
         similarity_score: 0.0,
         tags: hit.tags,
-        body: None,
-        body_truncated: None,
+        body,
+        body_truncated,
         store: Some(store),
         citation: hit.citation.as_ref().map(fact_citation_output),
     }

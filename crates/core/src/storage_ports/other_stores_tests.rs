@@ -167,6 +167,7 @@ impl OtherStores for WrongMemoryStore {
         Box::pin(async {
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })
@@ -401,6 +402,7 @@ impl OtherStores for SlowOrigins {
         Box::pin(async {
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })

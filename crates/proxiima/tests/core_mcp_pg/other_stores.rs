@@ -8,8 +8,8 @@ use std::time::Duration;
 use futures::future::BoxFuture;
 use proxiima::host::{
     OtherStores, OtherStoresError, OtherStoresService, ReadAt, RemoteAncestors,
-    RemoteAncestorsPage, RemoteEdge, RemoteGraphRead, RemoteHit, RemoteMemory, RemoteRead,
-    RemoteSearch, RemoteSearchResult, StoreCaller, StoreInfo,
+    RemoteAncestorsPage, RemoteBody, RemoteEdge, RemoteGraphRead, RemoteHit, RemoteMemory,
+    RemoteRead, RemoteSearch, RemoteSearchResult, StoreCaller, StoreInfo,
 };
 use proxiima::{Proxiima, SpiiceServices};
 use proxiima_core::verbs::query::{
@@ -202,6 +202,10 @@ impl OtherStores for FakeStores {
                                 snippet: memory.body.clone(),
                                 created_at: memory.created_at,
                                 tags: memory.tags.clone(),
+                                body: args.include_body.then(|| RemoteBody {
+                                    text: memory.body.clone(),
+                                    truncated: false,
+                                }),
                                 citation: None,
                             })
                         }
@@ -219,6 +223,7 @@ impl OtherStores for FakeStores {
             Ok(RemoteSearchResult {
                 hits,
                 degraded_to_lexical,
+                neighbor_edges: Vec::new(),
             })
         })
     }
@@ -1042,7 +1047,7 @@ async fn assert_remote_search_intent(
         owner,
         "core_search_memories",
         serde_json::json!({
-            "query":"zebra", "mode":"hybrid", "limit":1, "kind":"Fact",
+            "query":"zebra", "mode":"hybrid", "limit":1, "kind":"Fact", "include_body":true, "body_max_chars":64,
             "schema_id":"remote/note", "tags":[" ReMoTe ","remote"], "tag_match":"all",
             "since":"1970-01-02T00:00:00Z", "until":"1970-01-05T00:00:00Z",
             "order":"recency", "supersession":"all", "min_score":0.2,
@@ -1055,6 +1060,7 @@ async fn assert_remote_search_intent(
         found["memories"][0]["memory"],
         remote_id(1, "w1").to_string()
     );
+    assert_eq!(found["memories"][0]["body"], "zebra crossing in the wiki");
     assert_eq!(found["degraded_to_lexical"], true);
     let expected = RemoteSearch {
         query: Some("zebra".into()),
@@ -1071,6 +1077,9 @@ async fn assert_remote_search_intent(
         supersession: SupersessionStatus::IncludeSuperseded,
         min_score: Some(0.2),
         semantic_weight: Some(0.7),
+        include_body: true,
+        body_max_chars: 64,
+        include_neighbor_edges: false,
     };
     let requests = fake.searches();
     assert_eq!(requests.len() - before, 2);

@@ -137,7 +137,7 @@ pub use proxiima_core::storage_ports::HostStatePayloadOwners;
 /// request, answer and bounded-service result nameable by hosts implementing or wiring the port.
 pub use proxiima_core::storage_ports::other_stores::{
     OtherStores, OtherStoresError, OtherStoresService, ReadAt, ReadOrigin, RemoteAncestors,
-    RemoteAncestorsPage, RemoteEdge, RemoteEdgeTarget, RemoteGraphRead, RemoteHit,
+    RemoteAncestorsPage, RemoteBody, RemoteEdge, RemoteEdgeTarget, RemoteGraphRead, RemoteHit,
     RemoteLineageEdge, RemoteLineageNode, RemoteMemory, RemoteOriginRead, RemoteRead, RemoteSearch,
     RemoteSearchResult, StoreCaller, StoreInfo, StoreInventory,
 };

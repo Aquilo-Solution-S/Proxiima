@@ -60,6 +60,7 @@ impl OtherStores for ControlledStore {
         Box::pin(async {
             Ok(RemoteSearchResult {
                 hits: Vec::new(),
+                neighbor_edges: Vec::new(),
                 degraded_to_lexical: false,
             })
         })

@@ -302,7 +302,8 @@ pub(crate) async fn search_remotes(
     (answered, unanswered)
 }
 
-/// A port response belongs to the requested numbered store, or the store did not answer safely.
+/// A port response belongs to the requested numbered store and its edges to
+/// its own hits, or the store did not answer safely.
 fn checked_remote_hits(
     store: u16,
     result: RemoteSearchResult,
@@ -314,6 +315,15 @@ fn checked_remote_hits(
     {
         return Err(OtherStoresError::Unavailable(
             "search returned a memory from another store".into(),
+        ));
+    }
+    if result
+        .neighbor_edges
+        .iter()
+        .any(|edge| !result.hits.iter().any(|hit| edge.touches(hit.handle)))
+    {
+        return Err(OtherStoresError::Unavailable(
+            "search returned an edge of no memory it found".into(),
         ));
     }
     Ok(result)
