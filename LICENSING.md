@@ -13,7 +13,8 @@ maintained in this repository:
   transport, auth, and testkit crates)
 - `spiices/example/` (tutorial and test example spiice)
 - `tools/` (local development helpers)
-- `docs/` (documentation and Lean 4 `Causa` kernel specifications)
+- `docs/` (documentation)
+- `lean/` (Lean 4 `Causa` kernel specifications)
 
 ### Separate Commercial & Proprietary Repositories
 
@@ -83,4 +84,3 @@ as part of open-source and commercial offerings. Mechanism:
    license, including relicensing rights)
 3. DCO sign-off (`Signed-off-by:` trailer) is welcome but does not substitute
    for the CLA
-
