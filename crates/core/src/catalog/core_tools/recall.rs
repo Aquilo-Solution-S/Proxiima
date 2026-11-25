@@ -77,7 +77,7 @@ pub struct RecallOutput {
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
 pub struct RecallSketch {
     pub handle: String,
-    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// The memory's owning space, as a `proxiima://memory/{id}` read reports it: `current`
     /// for the session's own owner, otherwise the owner's key from
     /// `core_memory_spaces`. Always present; `null` means the owner is
     /// unknown: the memory is no longer readable.

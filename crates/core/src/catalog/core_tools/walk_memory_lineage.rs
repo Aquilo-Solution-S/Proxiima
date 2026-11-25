@@ -92,7 +92,7 @@ pub struct WalkMemoryLineageOutput {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LineageNodeOutput {
     pub memory: String,
-    /// The memory's owning space, as `core_get_memory` reports it: `current`
+    /// The memory's owning space, as a `proxiima://memory/{id}` read reports it: `current`
     /// for the session's own owner, otherwise the owner's key from
     /// `core_memory_spaces`; another store's memory, the owner's UUID that
     /// store reported. Always present; `null` means the owner is unknown: a

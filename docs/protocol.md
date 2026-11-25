@@ -89,8 +89,8 @@ nested groups, and use cases, and the
 Reads return committed rows admitted by owner or Goal authority. A `t` identifies one version;
 `handle` identifies its series. Head queries and exact-version reads are
 different operations. A Goal handle read returns its current head; explicit
-version selectors can retrieve historical rows. An explicit `space` on
-`core_get_memory` must be readable, including when the memory comes from
+version selectors can retrieve historical rows. An explicit `space` on a
+`proxiima://memory/{id}` read must be readable, including when the memory comes from
 another store. When `space` is omitted, only the local route requires read
 access to the session's own space.
 
@@ -282,8 +282,8 @@ own fallback.
 
 A memory on another store that the store did not answer for (it failed, timed
 out, or answered for a different memory) is never reported as missing: nothing
-is known about whether it exists. A single read (`core_get_memory`, derive
-sources, interpret subjects) fails with JSON-RPC `-32000` and `error.data`
+is known about whether it exists. A single read (`proxiima://memory/{id}`,
+derive sources, interpret subjects) fails with JSON-RPC `-32000` and `error.data`
 `{"code": "store_unavailable", "store": N}` (REST `503`, type
 `store-unavailable`); retry it. The batch read `proxiima://memories` lists such
 ids in `unanswered`, beside `missing` (an answered not-found, erased, or

@@ -292,8 +292,8 @@ pub enum RemoteEdgeTarget {
     Erased,
 }
 
-/// One edge touching a remote memory, as `core_get_memory`'s
-/// `expand_neighbors` lists it in the owning store.
+/// One edge touching a remote memory, as a `proxiima://memory/{id}` read
+/// with `expand_neighbors` lists it in the owning store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteEdge {
     pub source: Uuid,

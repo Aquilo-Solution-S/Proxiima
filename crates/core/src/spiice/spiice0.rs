@@ -1390,7 +1390,7 @@ const RESOURCES: &[ResourceContract] = &[
         answer: ResourceAnswer::of::<GetGraphOutput>(),
     },
     ResourceContract {
-        uri_template: "proxiima://memory/{id}{?expand_neighbors,version}",
+        uri_template: "proxiima://memory/{id}{?expand_neighbors,version,space}",
         path: "memory",
         name: "proxiima-memory",
         title: "Proxiima Memory",

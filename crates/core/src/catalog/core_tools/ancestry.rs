@@ -103,7 +103,7 @@ pub(crate) async fn ancestor_edges(
 /// The subjects `PayloadOnly` nodes ground in, read through the payload
 /// fields their schemas declare, as `Reference` edges.
 ///
-/// `get_memories` is the same owner-scoped read `core_get_memories` uses,
+/// `get_memories` is the same owner-scoped read `proxiima://memories` uses,
 /// so a subject the caller may not see is not returned and the walk simply
 /// does not reach it — the ordinary shape of an absent node, not a redaction.
 async fn payload_subjects(
