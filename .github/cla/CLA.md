@@ -1,7 +1,7 @@
 # Contributor License Agreement (CLA)
 
-**This Contributor License Agreement ("Agreement")** is entered into between Aquilo
-Solutions ("Aquilo") and You ("Contributor").
+**This Contributor License Agreement ("Agreement")** is entered into between
+Aquilo Solution.S GmbH ("Aquilo") and You ("Contributor").
 
 ## 1. Definitions
 
@@ -30,7 +30,7 @@ section) patent license to make, have made, use, offer to sell, sell, import,
 and otherwise transfer the Work, where such license applies only to those
 patent claims licensable by You that are necessarily infringed by Your
 Contribution(s) alone or by combination of Your Contribution(s) with the Work
-to which such Contribution(s) was submitted.**
+to which such Contribution(s) was submitted.
 
 If any entity institutes patent litigation against You or any other entity
 (including a cross-claim or counterclaim in a lawsuit) alleging that Your
@@ -83,7 +83,8 @@ Your violation of any terms of this Agreement.
 ## 9. Governing Law and Jurisdiction
 
 This Agreement shall be governed by and construed in accordance with the laws
-of Switzerland, without regard to its conflict of law provisions.
+of the Federal Republic of Germany, without regard to its conflict of law
+provisions.
 
 ## 10. Acceptance
 
@@ -93,7 +94,7 @@ Contribution.
 
 ---
 
-**Aquilo Solutions**
+**Aquilo Solution.S GmbH**
 
 This CLA is based on the Harmony Agreements (version 1.0) and is compatible
 with the Apache License, Version 2.0.
