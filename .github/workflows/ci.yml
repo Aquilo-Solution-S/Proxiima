@@ -106,7 +106,7 @@ jobs:
       - name: install git-cliff
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || needs.changes.outputs.release == 'true' }}
         # taiki-e/install-action@v2; same generator as the tag workflow.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
         with:
           tool: git-cliff@2.13.1
       - name: release-note configuration
@@ -156,7 +156,7 @@ jobs:
       # cargo-deny-action v2.0.20 pinned by commit SHA (bundles cargo-deny 0.19.8,
       # the schema deny.toml targets). Dependabot's github-actions ecosystem keeps
       # this current via reviewable PRs.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+      - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9
         with:
           command: check advisories licenses bans sources
 
@@ -267,7 +267,7 @@ jobs:
         # taiki-e/install-action@v2. The tool is an input, not the `@nextest`
         # tag: a pinned commit names no tool, and a dependabot bump of the pin
         # then installs nothing.
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
         with:
           tool: nextest
       - name: build
@@ -371,7 +371,7 @@ jobs:
           test "$(psql "$PROXIIMA_TEST_PGBOUNCER_URL" -Atc 'SELECT 1')" = 1
       - name: install nextest
         # taiki-e/install-action@v2
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f
         with:
           tool: nextest
       - name: test through pgbouncer, each binary through the pooler
