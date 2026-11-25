@@ -1,23 +1,30 @@
 use super::{
     LaneArm, MemoryKind, MergeKind, OwnerLane, PageCursor, SearchMemoriesArgs, SearchMemoriesMode,
     SearchMemoriesSupersession, cursor_positions, decode_cursor, encode_cursor, truncate_body,
-    validate_body_max_chars, validate_list_caps, validate_score_args,
+    validate_body_max_chars, validate_list_caps, validate_listing_args, validate_score_args,
 };
 use crate::ToolError;
+use crate::catalog::contract::Tool;
 use crate::verbs::query::{
     SearchCursor, SearchMode, SearchOrder, TagMatch,
     hybrid_degraded_to_lexical as degraded_to_lexical,
 };
 use crate::{MemoryId, OwnerId};
+use crate::{SpiiceServices, ToolCaller};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 fn args(mode: SearchMemoriesMode) -> SearchMemoriesArgs {
     SearchMemoriesArgs {
-        query: "needle".into(),
-        mode,
+        query: Some("needle".into()),
+        mode: Some(mode),
         limit: 8,
         supersession: SearchMemoriesSupersession::HeadsOnly,
         kind: None,
         schema_id: None,
+        exclude_schema_ids: Vec::new(),
         tags: Vec::new(),
         tag_match: TagMatch::Any,
         since: None,
@@ -32,6 +39,24 @@ fn args(mode: SearchMemoriesMode) -> SearchMemoriesArgs {
         cursor: None,
         stores: None,
     }
+}
+
+#[test]
+fn listing_requires_recency_and_rejects_query_only_knobs() {
+    let mut listing = args(SearchMemoriesMode::Lexical);
+    listing.query = None;
+    listing.mode = None;
+    listing.order = SearchOrder::Relevance;
+    assert!(validate_listing_args(&listing, false).is_err());
+    listing.order = SearchOrder::Recency;
+    listing.min_score = Some(0.1);
+    assert!(validate_listing_args(&listing, false).is_err());
+    listing.min_score = None;
+    listing.semantic_weight = Some(0.5);
+    assert!(validate_listing_args(&listing, false).is_err());
+    listing.semantic_weight = None;
+    listing.mode = Some(SearchMemoriesMode::Lexical);
+    assert!(validate_listing_args(&listing, false).is_err());
 }
 
 #[test]
@@ -258,6 +283,10 @@ fn score_args_reject_out_of_range_and_non_hybrid_weight() {
     valid.min_score = Some(0.25);
     valid.semantic_weight = Some(1.0);
     assert!(validate_score_args(&valid).is_ok());
+
+    let mut omitted_mode = valid;
+    omitted_mode.mode = None;
+    assert!(validate_score_args(&omitted_mode).is_ok());
 }
 
 #[test]
@@ -290,6 +319,101 @@ fn cursor_round_trips_and_rejects_foreign_or_garbled_tokens() {
             other => panic!("expected malformed cursor error, got {other:?}"),
         }
     }
+}
+
+#[test]
+fn fingerprint_binds_query_presence_and_canonical_exclusions() {
+    let lanes = Vec::new();
+    let mut query_args = args(SearchMemoriesMode::Lexical);
+    query_args.exclude_schema_ids = vec!["b".into(), "a".into(), "a".into()];
+    let with_query = super::query_fingerprint(Some("needle"), &query_args, None, None, &lanes);
+    let reordered = {
+        query_args.exclude_schema_ids = vec!["a".into(), "b".into()];
+        super::query_fingerprint(Some("needle"), &query_args, None, None, &lanes)
+    };
+    assert_eq!(with_query, reordered);
+    let without_query = super::query_fingerprint(None, &query_args, None, None, &lanes);
+    assert_ne!(with_query, without_query);
+    query_args.exclude_schema_ids = vec!["c".into()];
+    assert_ne!(
+        without_query,
+        super::query_fingerprint(None, &query_args, None, None, &lanes)
+    );
+}
+
+#[test]
+fn exclusion_length_is_bounded() {
+    let mut request = args(SearchMemoriesMode::Lexical);
+    request.exclude_schema_ids = (0..=super::MAX_EXCLUDED_SCHEMA_IDS)
+        .map(|index| format!("schema-{index}"))
+        .collect();
+    assert!(matches!(
+        validate_list_caps(&request),
+        Err(ToolError::InvalidInput(message)) if message.contains("exclude_schema_ids")
+    ));
+}
+
+#[tokio::test]
+async fn listing_does_not_call_embedding_client() {
+    #[derive(Debug)]
+    struct CountingEmbedding(AtomicUsize);
+    #[async_trait::async_trait]
+    impl crate::embedding::EmbeddingClient for CountingEmbedding {
+        async fn embed(&self, _text: &str) -> Result<Vec<f32>, crate::embedding::LlmError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![0.0; 384])
+        }
+        fn model_id(&self) -> &'static str {
+            "listing-test"
+        }
+        fn dim(&self) -> usize {
+            384
+        }
+    }
+    let client = Arc::new(CountingEmbedding(AtomicUsize::new(0)));
+    let bound = crate::embedding::BoundEmbeddingClient::bind(client.clone()).expect("test client");
+    let router = Arc::new(crate::test_fixtures::TestEmbeddingRouter::default());
+    router.set_default(bound);
+    let registry = crate::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let engine = Arc::new(
+        crate::Engine::new_or_panic_for_tests(
+            registry.clone(),
+            crate::StoragePorts::rejecting_for_tests(),
+        )
+        .with_embedding_router(router),
+    );
+    let owner = crate::OwnerId::from(crate::UserId::new(uuid::Uuid::now_v7()));
+    let authz = crate::AuthzContext::single_owner(&owner, crate::AuthPath::HostBearer);
+    let ctx = || {
+        crate::test_fixtures::tool_ctx_on(
+            owner,
+            authz.clone(),
+            engine.clone(),
+            SpiiceServices::default(),
+            ToolCaller::new("test", "test", "0"),
+        )
+    };
+    let mut listing = args(SearchMemoriesMode::Lexical);
+    listing.query = None;
+    listing.mode = None;
+    listing.order = SearchOrder::Recency;
+    let listed = <super::SearchMemoriesTool as Tool>::call(ctx(), listing)
+        .await
+        .expect("a listing passes validation");
+    assert_eq!(listed.mode, None, "a listing reports no ranking mode");
+    assert_eq!(
+        client.0.load(Ordering::SeqCst),
+        0,
+        "a listing embeds nothing"
+    );
+    // The control: a hybrid query on the same fixture embeds its query once.
+    let _ =
+        <super::SearchMemoriesTool as Tool>::call(ctx(), args(SearchMemoriesMode::Hybrid)).await;
+    assert_eq!(
+        client.0.load(Ordering::SeqCst),
+        1,
+        "a hybrid query embeds once"
+    );
 }
 
 #[test]
@@ -455,8 +579,8 @@ fn spaces_dedup_by_resolved_owner_not_raw_key() {
     };
     let query_args = args(SearchMemoriesMode::Lexical);
     assert_eq!(
-        super::query_fingerprint("needle", &query_args, None, None, &lexical(deduped)),
-        super::query_fingerprint("needle", &query_args, None, None, &lexical(single)),
+        super::query_fingerprint(Some("needle"), &query_args, None, None, &lexical(deduped)),
+        super::query_fingerprint(Some("needle"), &query_args, None, None, &lexical(single)),
     );
 }
 
@@ -531,7 +655,7 @@ mod other_stores {
             local[1].memory.clone(),
         ];
         let mut output = SearchMemoriesOutput {
-            mode: SearchMode::Lexical,
+            mode: Some(SearchMode::Lexical),
             degraded_to_lexical: false,
             ranking: SearchRanking::Score,
             memories: local,
@@ -602,7 +726,7 @@ mod other_stores {
             wiki[1].handle.to_string(),
         ];
         let mut output = SearchMemoriesOutput {
-            mode: SearchMode::Hybrid,
+            mode: Some(SearchMode::Hybrid),
             degraded_to_lexical: true,
             ranking: SearchRanking::Score,
             memories: local,
@@ -657,7 +781,7 @@ mod other_stores {
         remote.created_at = local.created_at + time::Duration::seconds(1);
         let remote_id = remote.handle;
         let mut output = SearchMemoriesOutput {
-            mode: SearchMode::Lexical,
+            mode: Some(SearchMode::Lexical),
             degraded_to_lexical: false,
             ranking: SearchRanking::Score,
             neighbor_edges: vec![super::super::NeighborEdge {
@@ -828,10 +952,11 @@ mod other_stores {
             assert_eq!(
                 *port.requests.lock().unwrap(),
                 vec![RemoteSearch {
-                    query: "needle".into(),
+                    query: Some("needle".into()),
                     limit: 50,
                     kind: Some(EntityKind::Fact),
                     schema_id: Some("remote/note".into()),
+                    exclude_schema_ids: Vec::new(),
                     tags: vec!["rust".into(), "zed".into()],
                     tag_match: TagMatch::All,
                     mode: SearchMode::from(mode),
@@ -844,6 +969,32 @@ mod other_stores {
                 }]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn remote_listing_forwards_absent_query_and_exclusions() {
+        let port = Arc::new(CapturingStore::new(Ok(RemoteSearchResult {
+            hits: vec![remote_hit(1)],
+            degraded_to_lexical: false,
+        })));
+        let mut request = remote_args(SearchMemoriesMode::Lexical);
+        request.query = None;
+        request.mode = None;
+        request.order = SearchOrder::Recency;
+        request.exclude_schema_ids = vec!["b".into(), "a".into()];
+        let output = SearchMemoriesTool::call(remote_ctx(&port), request)
+            .await
+            .expect("listing reaches the remote port");
+        let captured = &port.requests.lock().unwrap()[0];
+        assert_eq!(captured.query, None);
+        assert_eq!(captured.exclude_schema_ids, vec!["b", "a"]);
+        assert_eq!(captured.mode, SearchMode::Lexical);
+        assert_eq!(output.mode, None);
+        assert_eq!(output.ranking, SearchRanking::Score);
+        assert_eq!(output.memories.len(), 1);
+        assert_eq!(output.memories[0].score, 0.0);
+        assert_eq!(output.memories[0].lexical_score, 0.0);
+        assert_eq!(output.memories[0].similarity_score, 0.0);
     }
 
     #[tokio::test]

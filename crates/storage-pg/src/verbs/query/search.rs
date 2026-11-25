@@ -61,6 +61,7 @@ use sqlx::{PgConnection, Postgres, Transaction};
 
 use super::embedding_candidates::{SEMANTIC_SCAN_CAP, next_candidate_window};
 use super::lineage::load_one_schema_snippets_on_connection;
+use super::memories::{TagSpec, tag_predicate};
 
 mod hybrid;
 
@@ -147,6 +148,11 @@ pub(crate) async fn search_memories_on_connection(
     }
     let limit = req.limit.min(MAX_SEARCH_PAGE_LIMIT);
     let spiices = core_search_spiices(req, projections);
+    if req.query.is_none() {
+        let mut page = listing_on_connection(connection.as_mut(), req, &spiices, limit).await?;
+        hydrate_snippets_on_connection(connection.as_mut(), projections, &mut page.results).await?;
+        return Ok(page);
+    }
     let mut hits = SearchHits {
         rows: BTreeMap::new(),
         bound: CandidateBound::Complete,
@@ -300,6 +306,13 @@ fn core_search_spiices<'a>(
         {
             continue;
         }
+        if req
+            .exclude_schema_ids
+            .iter()
+            .any(|excluded| excluded == projection.schema_id.as_str())
+        {
+            continue;
+        }
         if !req.tags.is_empty() && projection.tag_column.is_none() {
             continue;
         }
@@ -323,6 +336,205 @@ fn core_search_spiices<'a>(
         .into_values()
         .filter_map(SpiiceScan::new)
         .collect()
+}
+
+/// What a listing narrows on beyond its owners (`$1`) and participating
+/// schemas (`$2`, already narrowed by kind, `schema_id`, tags and
+/// exclusions). Each narrowing is present only when the request asks for it,
+/// so a generic plan still seeks the `(owner_id, t DESC)` index instead of
+/// testing `$n IS NULL`; the SQL and the binds are rendered from this one
+/// value, in the same order.
+struct ListingNarrowing<'a> {
+    /// The closed kind label, spliced as a literal so a per-kind partial
+    /// index predicate can be proven.
+    kind: Option<&'static str>,
+    since: Option<time::OffsetDateTime>,
+    until: Option<time::OffsetDateTime>,
+    /// The recency keyset: rows strictly older than the cursor's `t`.
+    before: Option<uuid::Uuid>,
+    tag_specs: Vec<TagSpec>,
+    tags: &'a [String],
+    tag_match: TagMatch,
+}
+
+impl ListingNarrowing<'_> {
+    /// The listing statement: each readable owner's newest rows through its
+    /// `(owner_id, t DESC)` index, and the Goal-visible stream, merged and
+    /// cut to `fetch_limit`.
+    fn statement(&self, heads_only: bool, fetch_limit: u64) -> SqlText {
+        // Heads come from `memory_head`, which carries no forgotten mark, so
+        // the live check stays; every version comes from `live_memory` itself.
+        let (source, alias, live_check, goal_source) = if heads_only {
+            (
+                "proxiima_core.memory_head",
+                "h",
+                " AND EXISTS (SELECT 1 FROM proxiima_core.live_memory live WHERE live.t = h.t)",
+                "proxiima_core.goal_visible_memory_heads()",
+            )
+        } else {
+            (
+                "proxiima_core.live_memory",
+                "m",
+                "",
+                "proxiima_core.goal_visible_memory_ids()",
+            )
+        };
+        // Each owner's ordered stream is bounded before the merge, using its
+        // (owner_id, t DESC) index; Goal publications form a separate stream.
+        let mut sql = SqlText::new(
+            "SELECT t FROM ((SELECT page.t FROM proxiima_core.owners o CROSS JOIN LATERAL (SELECT ",
+        );
+        sql.push(alias)
+            .push(".t FROM ")
+            .push(source)
+            .push(" ")
+            .push(alias)
+            .push(" WHERE ")
+            .push(alias)
+            .push(".owner_id = o.owner_id")
+            .push_text(&self.predicates(alias))
+            .push(live_check)
+            .push(" ORDER BY ")
+            .push(alias)
+            .push(".t DESC LIMIT ")
+            .push_u64(fetch_limit)
+            .push(") page WHERE o.owner_id = ANY($1::uuid[])) UNION (SELECT m.t FROM ")
+            .push(goal_source)
+            .push(" v JOIN proxiima_core.live_memory m ON m.t = v.memory_t WHERE v.owner_id = ANY($1::uuid[])")
+            .push_text(&self.predicates("m"))
+            .push(" ORDER BY m.t DESC LIMIT ")
+            .push_u64(fetch_limit)
+            .push(")) candidates ORDER BY t DESC LIMIT ")
+            .push_u64(fetch_limit);
+        sql
+    }
+
+    fn predicates(&self, alias: &'static str) -> SqlText {
+        let mut sql = SqlText::new(" AND ");
+        sql.push(alias).push(".schema_id = ANY($2::text[])");
+        if let Some(kind) = self.kind {
+            sql.push(" AND ")
+                .push(alias)
+                .push(".kind = '")
+                .push(kind)
+                .push("'::proxiima_core.memory_kind");
+        }
+        let mut next: u64 = 3;
+        if self.since.is_some() {
+            sql.push(" AND proxiima_core.memory_created_at(")
+                .push(alias)
+                .push(".t) >= $")
+                .push_u64(next);
+            next += 1;
+        }
+        if self.until.is_some() {
+            sql.push(" AND proxiima_core.memory_created_at(")
+                .push(alias)
+                .push(".t) <= $")
+                .push_u64(next);
+            next += 1;
+        }
+        if self.before.is_some() {
+            sql.push(" AND ").push(alias).push(".t < $").push_u64(next);
+            next += 1;
+        }
+        if !self.tag_specs.is_empty() {
+            sql.push_text(&tag_predicate(
+                alias,
+                &self.tag_specs,
+                usize::try_from(next).unwrap_or(usize::MAX),
+                next + self.tag_specs.len() as u64,
+                self.tag_match,
+            ));
+        }
+        sql
+    }
+}
+
+async fn listing_on_connection(
+    connection: &mut PgConnection,
+    req: &MemorySearchRequest,
+    spiices: &[SpiiceScan<'_>],
+    limit: u32,
+) -> Result<MemorySearchPage, StorageError> {
+    let owner_ids: Vec<_> = req
+        .read_owners
+        .iter()
+        .map(|owner| owner.into_inner())
+        .collect();
+    let participating: Vec<_> = spiices.iter().flat_map(|spiice| &spiice.schemas).collect();
+    let schema_ids: Vec<_> = participating
+        .iter()
+        .map(|projection| projection.schema_id.as_str())
+        .collect();
+    if schema_ids.is_empty() {
+        return Ok(page_hits(req, limit, Vec::new(), CandidateBound::Complete));
+    }
+    let mut tag_specs = Vec::new();
+    if !req.tags.is_empty() {
+        for projection in &participating {
+            if let Some(tag_column) = projection.tag_column.as_deref() {
+                tag_specs.push(TagSpec {
+                    schema_id: projection.schema_id.as_str().to_owned(),
+                    table: PgIdent::table(&projection.sidecar_table)?,
+                    key_column: PgIdent::column(&projection.sidecar_key_column)?,
+                    tag_column: PgIdent::column(tag_column)?,
+                });
+            }
+        }
+    }
+    let narrowing = ListingNarrowing {
+        kind: kind_literal(req.kind),
+        since: req.since,
+        until: req.until,
+        before: match req.after {
+            Some(SearchCursor::Recency { memory_id, .. }) => Some(memory_id.into_inner()),
+            _ => None,
+        },
+        tag_specs,
+        tags: &req.tags,
+        tag_match: req.tag_match,
+    };
+    let sql = narrowing.statement(
+        matches!(req.supersession, SupersessionStatus::HeadsOnly),
+        u64::from(limit) + 1,
+    );
+    let mut query = sqlx::query_scalar::<_, uuid::Uuid>(sql)
+        .bind(&owner_ids)
+        .bind(&schema_ids);
+    if let Some(since) = narrowing.since {
+        query = query.bind(since);
+    }
+    if let Some(until) = narrowing.until {
+        query = query.bind(until);
+    }
+    if let Some(before) = narrowing.before {
+        query = query.bind(before);
+    }
+    if !narrowing.tag_specs.is_empty() {
+        for spec in &narrowing.tag_specs {
+            query = query.bind(&spec.schema_id);
+        }
+        query = query.bind(narrowing.tags);
+    }
+    let hits = query
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(map_err)?
+        .into_iter()
+        .map(|t| {
+            (
+                t,
+                Hit {
+                    t,
+                    lexical_score: None,
+                    similarity_score: None,
+                },
+            )
+        })
+        .collect();
+    let admitted = admit_hits_on_connection(connection, req, &hits).await?;
+    Ok(page_hits(req, limit, admitted, CandidateBound::Complete))
 }
 
 fn payload_kind_matches(requested: Option<EntityKind>, kind: PayloadKind) -> bool {
@@ -419,6 +631,9 @@ async fn scan_one_spiice_on_connection(
     limit: u32,
     rescue: bool,
 ) -> Result<HitBatch, StorageError> {
+    let query_text = req.query.as_deref().ok_or_else(|| {
+        StorageError::ConstraintViolation("lexical search requires a query".into())
+    })?;
     let recency_t = match req.after {
         Some(SearchCursor::Recency { memory_id, .. }) if !uses_hybrid_fusion(req) => {
             Some(memory_id.into_inner())
@@ -481,7 +696,7 @@ async fn scan_one_spiice_on_connection(
         let missing_ids: Vec<&str> = missing.iter().map(|p| p.schema_id.as_str()).collect();
         let sql = crate::search_candidates::call_sql(&spiice.head().projection_table, true)?;
         let rows: Vec<SubstringRow> = sqlx::query_as(sql)
-            .bind(like_pattern(&req.query))
+            .bind(like_pattern(query_text))
             .bind(overfetch)
             .bind(tags)
             .bind(req.since)

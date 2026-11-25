@@ -369,13 +369,13 @@ fn host_api_can_build_a_search_read_request() {
         search: proxiima::MemorySearchRequest {
             scope: proxiima::MemorySearchScope::Owner(owner),
             read_owners: vec![owner],
-            query: "Schnittzeichnung Getriebe".to_owned(),
+            query: Some("Schnittzeichnung Getriebe".to_owned()),
             mode: proxiima::SearchMode::Hybrid,
             supersession: proxiima::SupersessionStatus::HeadsOnly,
             limit: 5,
             kind: None,
             schema_id: None,
-            // The only predicate that narrows a search to part of a corpus.
+            exclude_schema_ids: Vec::new(),
             tags: vec!["book:0198f0d2".to_owned()],
             tag_match: proxiima::TagMatch::Any,
             since: None,

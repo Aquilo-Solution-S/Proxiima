@@ -9,7 +9,7 @@ use crate::storage_ports::ReadVerbStoragePorts;
 use crate::storage_ports::other_stores::ReadAt;
 use crate::verbs::query::{
     FactCitationReadback, FactCitations, MAX_RELEVANCE_SEARCH_DEPTH, MemorySearchRequest,
-    MemorySearchResult, SearchCursor, SearchMode,
+    MemorySearchResult, SearchCursor, SearchMode, SearchOrder,
 };
 use crate::verbs::schema::{MemorySearchProjection, payload_entity_kind};
 use crate::{MemoryId, OwnerId, SchemaId, SchemaVersion};
@@ -100,8 +100,10 @@ impl Engine {
     /// outside `0.0..=1.0`, when `semantic_weight` is set on a mode other
     /// than [`crate::verbs::query::SearchMode::Hybrid`], or when `after`
     /// disagrees with `order` or exceeds the relevance pagination depth
-    /// bound; `Forbidden` when the context cannot access
-    /// `req.search.owner` or reads nothing on it; `Internal` when
+    /// bound, or when a queryless listing carries non-lexical mode,
+    /// non-recency order, an embedding, or score options;
+    /// `Forbidden` when the context cannot access the requested scope;
+    /// `Internal` when
     /// storage reads fail.
     // Similarity retrieval does not author pins.
     pub async fn search(
@@ -476,6 +478,38 @@ impl Engine {
 /// the modes each knob is meaningful in. Storage re-validates the
 /// cursor/order pairing as defense in depth for direct port callers.
 fn validate_search_request(search: &MemorySearchRequest) -> Result<(), ProtocolError> {
+    if search.query.is_none() {
+        if !matches!(search.order, SearchOrder::Recency) {
+            return Err(ProtocolError::invalid_argument(
+                "order",
+                "a listing requires order=recency",
+            ));
+        }
+        if !matches!(search.mode, SearchMode::Lexical) {
+            return Err(ProtocolError::invalid_argument(
+                "mode",
+                "a listing requires lexical mode",
+            ));
+        }
+        if search.min_score.is_some() {
+            return Err(ProtocolError::invalid_argument(
+                "min_score",
+                "min_score requires a query",
+            ));
+        }
+        if search.semantic_weight.is_some() {
+            return Err(ProtocolError::invalid_argument(
+                "semantic_weight",
+                "semantic_weight requires a query",
+            ));
+        }
+        if search.semantic.is_some() {
+            return Err(ProtocolError::invalid_argument(
+                "semantic",
+                "a listing cannot carry a semantic vector",
+            ));
+        }
+    }
     if let Some(floor) = search.min_score
         && !crate::verbs::query::valid_search_score(floor)
     {

@@ -192,7 +192,8 @@ pub struct MemorySearchRequest {
     pub scope: MemorySearchScope,
     #[serde(skip)]
     pub read_owners: Vec<OwnerId>,
-    pub query: String,
+    /// Optional search text; `None` is a recency listing.
+    pub query: Option<String>,
     #[serde(default = "default_search_mode")]
     pub mode: SearchMode,
     #[serde(default = "default_supersession_status")]
@@ -200,6 +201,9 @@ pub struct MemorySearchRequest {
     pub limit: u32,
     pub kind: Option<EntityKind>,
     pub schema_id: Option<SchemaId>,
+    /// Schema ids excluded before paging.
+    #[serde(default)]
+    pub exclude_schema_ids: Vec<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]

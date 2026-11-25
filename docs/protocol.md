@@ -128,6 +128,12 @@ by event identity. Host routing and execution stay in the host. See
 
 ## Search across stores
 
+`core_search_memories` also lists memories newest first when `query` is omitted
+and `order=recency` is explicit, without embedding or text matching.
+`exclude_schema_ids` removes schemas before the page limit for listings and
+query searches, including searches of other stores. See the
+[live catalog](#protocol) for arguments and defaults.
+
 An other-store search carries the caller's filters and requested mode through
 `RemoteSearch`. Each store resolves its own embedding availability and returns
 `RemoteSearchResult`, including whether it fell back to lexical even when it

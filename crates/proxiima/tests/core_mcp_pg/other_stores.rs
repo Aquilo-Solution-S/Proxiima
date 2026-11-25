@@ -290,12 +290,18 @@ impl OtherStores for FakeStores {
 }
 
 fn remote_matches(memory: &RemoteMemory, args: &RemoteSearch) -> bool {
-    memory.body.contains(&args.query)
+    args.query
+        .as_ref()
+        .is_none_or(|query| memory.body.contains(query))
         && args.kind.is_none_or(|kind| memory.kind == kind)
         && args
             .schema_id
             .as_ref()
             .is_none_or(|schema| &memory.schema_id == schema)
+        && !args
+            .exclude_schema_ids
+            .iter()
+            .any(|schema| schema == &memory.schema_id)
         && args.since.is_none_or(|since| memory.created_at >= since)
         && args.until.is_none_or(|until| memory.created_at <= until)
         && (args.tags.is_empty()
@@ -1051,10 +1057,11 @@ async fn assert_remote_search_intent(
     );
     assert_eq!(found["degraded_to_lexical"], true);
     let expected = RemoteSearch {
-        query: "zebra".into(),
+        query: Some("zebra".into()),
         limit: 1,
         kind: Some(EntityKind::Fact),
         schema_id: Some("remote/note".into()),
+        exclude_schema_ids: Vec::new(),
         tags: vec!["remote".into()],
         tag_match: TagMatch::All,
         mode: SearchMode::Hybrid,

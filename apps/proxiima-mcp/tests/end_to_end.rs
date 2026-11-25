@@ -375,6 +375,7 @@ async fn oidc_host_auth_serves_tools_list() -> Result<(), Box<dyn std::error::Er
         );
         assert_plain_wire_schemas(tool);
     }
+    assert_search_listing_schemas(listed);
     let size = serde_json::to_string(&body["result"])?.len();
     assert!(
         size <= TOOLS_LIST_BUDGET,
@@ -385,6 +386,32 @@ async fn oidc_host_auth_serves_tools_list() -> Result<(), Box<dyn std::error::Er
 
     running.shutdown().await;
     Ok(())
+}
+
+fn assert_search_listing_schemas(listed: &[serde_json::Value]) {
+    let search = listed
+        .iter()
+        .find(|tool| tool["name"] == "core_search_memories")
+        .expect("search is served");
+    let input = &search["inputSchema"];
+    assert!(
+        input["required"].as_array().is_none_or(|required| {
+            !required
+                .iter()
+                .any(|field| field == "query" || field == "mode")
+        }),
+        "the served search accepts a listing without query or mode: {input}"
+    );
+    assert!(input["properties"]["exclude_schema_ids"]["maxItems"].is_number());
+    let output = &search["outputSchema"];
+    assert!(
+        !output["required"]
+            .as_array()
+            .expect("search output required fields")
+            .iter()
+            .any(|field| field == "mode"),
+        "a listing omits mode: {output}"
+    );
 }
 
 /// One reply against the output schema `tools/list` published for its tool,

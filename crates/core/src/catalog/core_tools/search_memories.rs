@@ -30,6 +30,8 @@ const DEFAULT_BODY_MAX_CHARS: usize = crate::MAX_TEXT_CAP_CHARS;
 /// this tool's only per-request work multiplier; cap it like every other
 /// list argument.
 const MAX_SEARCH_SPACES: usize = crate::ledger!(Proxiima.Search.spacesMax);
+/// Maximum schema exclusions accepted by one search request.
+pub const MAX_EXCLUDED_SCHEMA_IDS: usize = 64;
 
 #[derive(Debug, Default)]
 pub struct SearchMemoriesTool;
@@ -90,14 +92,14 @@ impl From<SearchMemoriesSupersession> for SupersessionStatus {
 pub struct SearchMemoriesArgs {
     #[schemars(
         length(min = 1, max = crate::catalog::MAX_QUERY_CHARS),
-        description = "Search query over owner-visible memories."
+        description = "Optional search query; omit for a listing with order=recency."
     )]
-    pub query: String,
-    #[serde(default = "default_mode")]
+    pub query: Option<String>,
+    #[serde(default)]
     #[schemars(
-        description = "Default hybrid. semantic fails without embeddings; hybrid falls back to lexical per space and sets degraded_to_lexical."
+        description = "Query searches default to hybrid (lexical fallback without embeddings); semantic requires embeddings, and listings forbid mode."
     )]
-    pub mode: SearchMemoriesMode,
+    pub mode: Option<SearchMemoriesMode>,
     #[serde(default = "default_limit")]
     #[schemars(
         range(min = 1),
@@ -118,6 +120,9 @@ pub struct SearchMemoriesArgs {
     )]
     pub schema_id: Option<String>,
     #[serde(default)]
+    #[schemars(length(max = MAX_EXCLUDED_SCHEMA_IDS), description = "Schema ids excluded before paging.")]
+    pub exclude_schema_ids: Vec<String>,
+    #[serde(default)]
     #[schemars(
         length(max = MAX_TAGS),
         description = "Optional tag filter. Tags are matched in stored form — trimmed and lowercased — so `Rust` and `rust` filter alike. Empty means no tag filter."
@@ -133,16 +138,16 @@ pub struct SearchMemoriesArgs {
     #[schemars(description = "Optional inclusive upper created_at bound as an RFC3339 timestamp.")]
     pub until: Option<String>,
     #[serde(default)]
-    #[schemars(description = "recency = newest first.")]
+    #[schemars(description = "recency = newest first and is required for a listing.")]
     pub order: SearchOrder,
     #[serde(default)]
     #[schemars(
-        description = "Minimum raw relevance score in 0..=1. Hybrid keeps a hit if either leg reaches the floor before rank fusion; lexical and semantic apply it to their own score. Omit or null for no floor."
+        description = "Requires a query: minimum raw relevance score in 0..=1, applied to either leg before hybrid fusion or the sole leg in lexical/semantic mode."
     )]
     pub min_score: Option<f32>,
     #[serde(default)]
     #[schemars(
-        description = "Hybrid reciprocal-rank fusion weight on the semantic leg in 0..=1; the lexical leg gets the complement. Defaults to 0.5. Only valid with mode=hybrid."
+        description = "Requires a hybrid query: semantic fusion weight in 0..=1 (default 0.5), with the complement on the lexical leg."
     )]
     pub semantic_weight: Option<f32>,
     #[serde(default)]
@@ -180,7 +185,8 @@ pub struct SearchMemoriesArgs {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SearchMemoriesOutput {
-    pub mode: SearchMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SearchMode>,
     pub degraded_to_lexical: bool,
     /// `score`: every result's `score` is on one scale. `rank`: the
     /// searched spaces were scored on different scales — Owners embedded
@@ -276,7 +282,7 @@ impl Tool for SearchMemoriesTool {
     const NAME: &'static str = protocol_tool::CORE_SEARCH_MEMORIES;
     const OPEN_WORLD: bool = true;
     const TITLE: &'static str = "Search memories";
-    const DESCRIPTION: &'static str = "Search memories by text, with kind/schema/tag/time/space filters. Latest versions only unless supersession=all; pages of at most 50. Hybrid score uses weighted RRF (k=60) over fixed candidate windows, comparable within its result list.";
+    const DESCRIPTION: &'static str = "Search memories by text, or omit query with order=recency to list; filter by kind/schema/tag/time/space. Latest versions only unless supersession=all; pages of at most 50. Hybrid score uses weighted RRF (k=60) over fixed candidate windows, comparable within its result list.";
     const EFFECT: Option<ToolEffect> = Some(ToolEffect::ReadOnly);
     // `stores` is rendered per caller (see `caller_input_schema`).
     const CALLER_RENDERED_FIELDS: &'static [&'static str] = &["stores"];
@@ -288,7 +294,12 @@ impl Tool for SearchMemoriesTool {
         mut args: SearchMemoriesArgs,
     ) -> BoxFuture<'static, Result<SearchMemoriesOutput, ToolError>> {
         Box::pin(async move {
-            let query = crate::validate_search_query(&args.query)?;
+            let query = args
+                .query
+                .as_deref()
+                .map(crate::validate_search_query)
+                .transpose()?;
+            validate_listing_args(&args, query.is_some())?;
             validate_score_args(&args)?;
             validate_body_max_chars(args.body_max_chars)?;
             crate::reject_zero_limit(Some(args.limit))?;
@@ -315,9 +326,15 @@ impl Tool for SearchMemoriesTool {
                 ));
             } else {
                 SearchMemoriesOutput {
-                    mode: SearchMode::from(args.mode),
+                    mode: query
+                        .as_ref()
+                        .map(|_| args.mode.unwrap_or_else(default_mode).into()),
                     degraded_to_lexical: false,
-                    ranking: SearchRanking::Rank,
+                    ranking: if query.is_none() {
+                        SearchRanking::Score
+                    } else {
+                        SearchRanking::Rank
+                    },
                     memories: Vec::new(),
                     neighbor_edges: Vec::new(),
                     next_cursor: None,
@@ -336,13 +353,16 @@ impl Tool for SearchMemoriesTool {
                 && args.cursor.is_none()
             {
                 let remote = crate::storage_ports::other_stores::RemoteSearch {
-                    query: query.to_string(),
+                    query: query.map(str::to_owned),
                     limit: args.limit.min(50),
                     kind: args.kind.map(EntityKind::from),
                     schema_id: args.schema_id.clone(),
+                    exclude_schema_ids: args.exclude_schema_ids.clone(),
                     tags: args.tags.clone(),
                     tag_match: args.tag_match,
-                    mode: SearchMode::from(args.mode),
+                    mode: query.as_ref().map_or(SearchMode::Lexical, |_| {
+                        args.mode.unwrap_or_else(default_mode).into()
+                    }),
                     since,
                     until,
                     order: args.order,
@@ -483,13 +503,16 @@ fn merge_store_hits(
         .into_iter()
         .take(usize::try_from(limit).unwrap_or(usize::MAX))
         .map(|(mut hit, score)| {
-            // A federated hit carries its store-local reciprocal rank as its score.
-            hit.score = score;
+            hit.score = if output.mode.is_none() { 0.0 } else { score };
             hit
         })
         .collect();
     retain_surviving_neighbor_edges(&output.memories, &mut output.neighbor_edges);
-    output.ranking = SearchRanking::Rank;
+    output.ranking = if output.mode.is_none() {
+        SearchRanking::Score
+    } else {
+        SearchRanking::Rank
+    };
     output.unanswered = Some(unanswered);
 }
 
@@ -526,14 +549,16 @@ fn remote_hit_output(
 async fn search_local(
     ctx: &ToolCtx,
     args: &SearchMemoriesArgs,
-    query: &str,
+    query: Option<&str>,
     since: Option<time::OffsetDateTime>,
     until: Option<time::OffsetDateTime>,
 ) -> Result<SearchMemoriesOutput, ToolError> {
     use tracing::Instrument as _;
     let span = tracing::debug_span!(target: "proxiima::stage_timing", "memory_search",
         search = %uuid::Uuid::now_v7(), work = "query");
-    let mode = SearchMode::from(args.mode);
+    let mode = query.map_or(SearchMode::Lexical, |_| {
+        args.mode.unwrap_or_else(default_mode).into()
+    });
     let spaces = resolve_search_spaces(ctx, &args.spaces)?;
     let lanes = crate::stage_timing::timed(
         "search_planning",
@@ -562,7 +587,7 @@ async fn search_local(
     let merge = MergeKind::of(ranking, args.order);
     let positions = cursor_positions(after.as_ref(), merge, &lanes)?;
     let prepared = PreparedSearch {
-        query: query.to_string(),
+        query: query.map(str::to_owned),
         since,
         until,
         body_max_chars: effective_body_max_chars(args.body_max_chars),
@@ -612,7 +637,7 @@ async fn search_local(
     retain_surviving_neighbor_edges(&memories, &mut all_neighbor_edges);
 
     Ok(SearchMemoriesOutput {
-        mode,
+        mode: query.map(|_| mode),
         degraded_to_lexical,
         ranking,
         memories,
@@ -625,7 +650,7 @@ async fn search_local(
 }
 
 struct PreparedSearch {
-    query: String,
+    query: Option<String>,
     since: Option<time::OffsetDateTime>,
     until: Option<time::OffsetDateTime>,
     body_max_chars: usize,
@@ -682,10 +707,10 @@ impl OwnerLane {
 async fn plan_owner_lanes(
     ctx: &ToolCtx,
     requested: SearchMode,
-    query: &str,
+    query: Option<&str>,
     spaces: Vec<ResolvedMemorySpace>,
 ) -> Result<Vec<OwnerLane>, ToolError> {
-    if matches!(requested, SearchMode::Lexical) {
+    let Some(query) = query.filter(|_| !matches!(requested, SearchMode::Lexical)) else {
         return Ok(spaces
             .into_iter()
             .map(|space| OwnerLane {
@@ -693,7 +718,7 @@ async fn plan_owner_lanes(
                 arm: LaneArm::Lexical,
             })
             .collect());
-    }
+    };
     let engine = ctx.engine();
     let mut routes = Vec::with_capacity(spaces.len());
     for space in &spaces {
@@ -860,11 +885,37 @@ fn validate_score_args(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
                 "semantic_weight must be within 0.0..=1.0".into(),
             ));
         }
-        if !matches!(args.mode, SearchMemoriesMode::Hybrid) {
+        if !matches!(
+            args.mode.unwrap_or_else(default_mode),
+            SearchMemoriesMode::Hybrid
+        ) {
             return Err(ToolError::InvalidInput(
                 "semantic_weight applies only to mode=hybrid".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_listing_args(args: &SearchMemoriesArgs, has_query: bool) -> Result<(), ToolError> {
+    if has_query {
+        return Ok(());
+    }
+    if !matches!(args.order, SearchOrder::Recency) {
+        return Err(ToolError::InvalidInput(
+            "a listing requires order=recency".into(),
+        ));
+    }
+    if args.mode.is_some() {
+        return Err(ToolError::InvalidInput("mode requires a query".into()));
+    }
+    if args.min_score.is_some() {
+        return Err(ToolError::InvalidInput("min_score requires a query".into()));
+    }
+    if args.semantic_weight.is_some() {
+        return Err(ToolError::InvalidInput(
+            "semantic_weight requires a query".into(),
+        ));
     }
     Ok(())
 }
@@ -917,6 +968,7 @@ async fn search_one_space(
         limit: prepared.limit,
         kind: args.kind.map(EntityKind::from),
         schema_id: args.schema_id.clone().map(SchemaId::new),
+        exclude_schema_ids: args.exclude_schema_ids.clone(),
         tags: args.tags.clone(),
         tag_match: args.tag_match,
         since: prepared.since,
@@ -1165,7 +1217,7 @@ fn decode_cursor(raw: &str, fingerprint: &str) -> Result<PageCursor, ToolError> 
 /// The fingerprint binds each owner's scoring lane.
 /// Sorting tags and owner lanes makes equivalent filter sets fingerprint identically.
 fn query_fingerprint(
-    query: &str,
+    query: Option<&str>,
     args: &SearchMemoriesArgs,
     since: Option<time::OffsetDateTime>,
     until: Option<time::OffsetDateTime>,
@@ -1173,6 +1225,9 @@ fn query_fingerprint(
 ) -> String {
     let mut tags = args.tags.clone();
     tags.sort_unstable();
+    let mut exclusions = args.exclude_schema_ids.clone();
+    exclusions.sort_unstable();
+    exclusions.dedup();
     let mut space_keys: Vec<(String, Option<String>)> = lanes
         .iter()
         .map(|lane| {
@@ -1185,11 +1240,12 @@ fn query_fingerprint(
     space_keys.sort_unstable();
     let canon = serde_json::to_string(&(
         query,
-        SearchMode::from(args.mode),
+        args.mode.map_or(SearchMode::Hybrid, SearchMode::from),
         SupersessionStatus::from(args.supersession),
         args.kind.map(|kind| EntityKind::from(kind).as_str()),
         args.schema_id.as_deref(),
         &tags,
+        &exclusions,
         args.tag_match,
         since.map(time::OffsetDateTime::unix_timestamp_nanos),
         until.map(time::OffsetDateTime::unix_timestamp_nanos),
@@ -1254,6 +1310,11 @@ fn fold_tag_filter(tags: &mut Vec<String>) {
 }
 
 fn validate_list_caps(args: &SearchMemoriesArgs) -> Result<(), ToolError> {
+    if args.exclude_schema_ids.len() > MAX_EXCLUDED_SCHEMA_IDS {
+        return Err(ToolError::InvalidInput(format!(
+            "exclude_schema_ids accepts at most {MAX_EXCLUDED_SCHEMA_IDS} entries"
+        )));
+    }
     if args.spaces.len() > MAX_SEARCH_SPACES {
         return Err(ToolError::InvalidInput(format!(
             "at most {MAX_SEARCH_SPACES} spaces per search"

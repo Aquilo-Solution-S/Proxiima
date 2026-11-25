@@ -56,12 +56,13 @@ fn search_req(owner: OwnerId) -> MemorySearchRequest {
     MemorySearchRequest {
         scope: proxiima_core::verbs::query::MemorySearchScope::Owner(owner),
         read_owners: vec![owner],
-        query: "needle".into(),
+        query: Some("needle".into()),
         mode: SearchMode::Lexical,
         supersession: SupersessionStatus::HeadsOnly,
         limit: 8,
         kind: Some(EntityKind::Fact),
         schema_id: None,
+        exclude_schema_ids: Vec::new(),
         tags: Vec::new(),
         tag_match: TagMatch::Any,
         since: None,
@@ -284,7 +285,7 @@ async fn hot_path_plans_use_expected_indexes() {
 
         let owner_ids = vec![owner.into_inner()];
         let req = search_req(owner);
-        let like = proxiima_core::verbs::query::like_pattern(&req.query);
+        let like = proxiima_core::verbs::query::like_pattern(req.query.as_deref().expect("query fixture"));
         let projection = note_projection();
         let schema_ids = vec![projection.schema_id.as_str()];
 

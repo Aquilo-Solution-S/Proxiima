@@ -202,10 +202,11 @@ async fn valid_inventories_route_each_selected_remote_once_in_request_order() {
             .expect("valid route");
         assert_eq!(routed.route, expected);
         let args = RemoteSearch {
-            query: "needle".into(),
+            query: Some("needle".into()),
             limit: 8,
             kind: None,
             schema_id: schema_id.map(str::to_owned),
+            exclude_schema_ids: Vec::new(),
             tags: Vec::new(),
             tag_match: crate::verbs::query::TagMatch::Any,
             mode: crate::verbs::query::SearchMode::Lexical,

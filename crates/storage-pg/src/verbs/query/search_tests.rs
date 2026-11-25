@@ -489,7 +489,8 @@ pub(super) fn request_with_tags() -> MemorySearchRequest {
         scope: proxiima_core::verbs::query::MemorySearchScope::Owner(OwnerId::from(
             proxiima_core::UserId::new(uuid::Uuid::nil()),
         )),
-        query: "needle".into(),
+        query: Some("needle".into()),
+        exclude_schema_ids: Vec::new(),
         mode: SearchMode::Lexical,
         supersession: SupersessionStatus::HeadsOnly,
         limit: 8,

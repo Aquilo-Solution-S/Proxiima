@@ -15,6 +15,9 @@ mod hybrid_rrf;
 #[path = "search_sidecar/candidates.rs"]
 mod candidates;
 
+#[path = "search_sidecar/listing.rs"]
+mod listing;
+
 use proxiima_core::spiice::{
     Band, BandComparability, LanguagePolicy, RankSource, SubstringArm, WEIGHT_UNIFORM,
 };
@@ -73,12 +76,13 @@ fn search_req(owner: OwnerId, query: &str) -> MemorySearchRequest {
     MemorySearchRequest {
         scope: proxiima_core::verbs::query::MemorySearchScope::Owner(owner),
         read_owners: vec![owner],
-        query: query.into(),
+        query: Some(query.into()),
         mode: SearchMode::Lexical,
         supersession: SupersessionStatus::HeadsOnly,
         limit: 8,
         kind: Some(EntityKind::Fact),
         schema_id: None,
+        exclude_schema_ids: Vec::new(),
         tags: Vec::new(),
         tag_match: TagMatch::Any,
         since: None,

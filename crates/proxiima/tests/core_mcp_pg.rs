@@ -2530,6 +2530,71 @@ async fn facade_core_episode_commit_bound_replay_fails() {
     result.expect("episode bound replay test failed");
 }
 
+async fn assert_queryless_listing_pages(
+    tools: &CoreMcpTools,
+    authz: AuthzContext,
+    owner: OwnerId,
+    first_id: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut expected = vec![first_id];
+    for index in 0..3 {
+        let remembered = call_test_model_tool(
+            tools, authz.clone(), owner, "core_remember",
+            serde_json::json!({"title": format!("Listing {index}"), "body": "listing body", "tags": []}),
+        ).await?;
+        expected.push(
+            remembered["handle"]
+                .as_str()
+                .expect("remembered id")
+                .to_owned(),
+        );
+    }
+    expected.reverse();
+    let mut listing_args = serde_json::json!({
+        "order": "recency", "kind": "Fact", "schema_id": "core/agent-note-v1",
+        "limit": 1, "include_body": true, "include_neighbor_edges": true
+    });
+    let mut actual = Vec::new();
+    let mut pages = 0;
+    for _ in 0..=expected.len() {
+        pages += 1;
+        let page = call_test_model_tool(
+            tools,
+            authz.clone(),
+            owner,
+            "core_search_memories",
+            listing_args.clone(),
+        )
+        .await?;
+        assert!(page.get("mode").is_none(), "a listing omits mode");
+        assert_eq!(page["ranking"], "score");
+        for hit in page["memories"].as_array().expect("listing memories") {
+            actual.push(hit["memory"].as_str().expect("listed id").to_owned());
+            assert_eq!(hit["score"], 0.0);
+            assert_eq!(hit["lexical_score"], 0.0);
+            assert_eq!(hit["similarity_score"], 0.0);
+            assert!(hit["body"].is_string(), "listing hydrates bodies");
+        }
+        if page["has_more"] == false {
+            assert!(page["next_cursor"].is_null());
+            break;
+        }
+        assert!(page["next_cursor"].is_string());
+        listing_args["cursor"] = page["next_cursor"].clone();
+    }
+    assert_eq!(
+        actual, expected,
+        "next_cursor neither repeats nor skips rows"
+    );
+    assert_eq!(
+        pages,
+        expected.len(),
+        "the last row's page ends the listing"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn facade_core_search_memories_degrades_to_lexical_without_embed_client() {
     // Finding A: a deployment with NO embedding client must not hard-fail on the
@@ -2599,6 +2664,17 @@ async fn facade_core_search_memories_degrades_to_lexical_without_embed_client() 
                 .is_empty(),
             "degraded search must still return lexical matches"
         );
+
+        assert_queryless_listing_pages(
+            &tools,
+            authz.clone(),
+            owner,
+            default_search["memories"][0]["memory"]
+                .as_str()
+                .expect("first search id")
+                .to_owned(),
+        )
+        .await?;
 
         // EXPLICIT semantic must still hard-error when embeddings are unavailable.
         let semantic = call_test_model_tool(

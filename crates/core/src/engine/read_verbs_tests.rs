@@ -152,12 +152,13 @@ fn search_req(owner: &OwnerId) -> SearchReadRequest {
         search: MemorySearchRequest {
             scope: crate::verbs::query::MemorySearchScope::Owner(*owner),
             read_owners: vec![*owner],
-            query: "needle".into(),
+            query: Some("needle".into()),
             mode: SearchMode::Lexical,
             supersession: SupersessionStatus::HeadsOnly,
             limit: 8,
             kind: None,
             schema_id: None,
+            exclude_schema_ids: Vec::new(),
             tags: Vec::new(),
             tag_match: TagMatch::Any,
             since: None,
@@ -258,6 +259,38 @@ async fn search_rejects_a_fusion_weight_no_mode_would_use() {
             "the error must name the mode that would have used it, got {:?}",
             err.message
         );
+    }
+}
+
+#[tokio::test]
+async fn listing_rejects_semantic_and_score_knobs_at_engine_boundary() {
+    let owner = owner();
+    let authz = granted_authz(&owner);
+    for mutate in [
+        |req: &mut SearchReadRequest| req.search.order = SearchOrder::Relevance,
+        |req: &mut SearchReadRequest| req.search.mode = SearchMode::Hybrid,
+        |req: &mut SearchReadRequest| req.search.min_score = Some(0.1),
+        |req: &mut SearchReadRequest| req.search.semantic_weight = Some(0.5),
+        |req: &mut SearchReadRequest| {
+            req.search.semantic = Some(
+                crate::SpaceVector::new(
+                    crate::EmbeddingSpace::new("test", crate::EmbeddingDim::D384),
+                    vec![0.0; 384],
+                )
+                .expect("matching test vector width"),
+            );
+        },
+    ] {
+        let mut req = search_req(&owner);
+        req.search.query = None;
+        req.search.mode = SearchMode::Lexical;
+        req.search.order = SearchOrder::Recency;
+        mutate(&mut req);
+        let err = engine()
+            .search(&authz, &req)
+            .await
+            .expect_err("invalid listing combination");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
     }
 }
 

@@ -116,10 +116,13 @@ impl StoreInventory {
 /// The search a remote store is asked to run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemoteSearch {
-    pub query: String,
+    /// Optional query; `None` requests a recency listing.
+    pub query: Option<String>,
     pub limit: u32,
     pub kind: Option<EntityKind>,
     pub schema_id: Option<String>,
+    /// Schema ids excluded before paging.
+    pub exclude_schema_ids: Vec<String>,
     pub tags: Vec<String>,
     pub tag_match: TagMatch,
     /// Requested mode; each store resolves its own embedding availability.
@@ -419,7 +422,8 @@ pub trait OtherStores: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<StoreInfo>, OtherStoresError>>;
 
     /// Search one store as `caller`, in the requested order. Every supplied
-    /// filter and score option must be honored or refused with
+    /// filter and score option, including an optional `query` and
+    /// `exclude_schema_ids`, must be honored or refused with
     /// [`OtherStoresError::UnsupportedSearch`]; never retry a weaker request.
     fn search<'a>(
         &'a self,

@@ -152,11 +152,11 @@ enum MemoryFilter {
 
 /// One schema's tag lookup. The identifiers are validated when the spec is
 /// built and are the values the predicate splices.
-struct TagSpec {
-    schema_id: String,
-    table: PgIdent,
-    key_column: PgIdent,
-    tag_column: PgIdent,
+pub(super) struct TagSpec {
+    pub(super) schema_id: String,
+    pub(super) table: PgIdent,
+    pub(super) key_column: PgIdent,
+    pub(super) tag_column: PgIdent,
 }
 
 impl MemoryFilter {
@@ -213,38 +213,13 @@ impl MemoryFilter {
                 specs, tag_match, ..
             } => {
                 let tags_placeholder = (placeholder + specs.len()) as u64;
-                // `Proxiima.Query.matchesTags`.
-                let op = match tag_match {
-                    proxiima_core::verbs::query::TagMatch::Any => "&&",
-                    proxiima_core::verbs::query::TagMatch::All => "@>",
-                };
-                // Keep each lookup correlated to its memory key. Pulling
-                // this up can rescan the sidecar's RLS visibility relation
-                // per page; OFFSET 0 preserves the one-key probe.
-                sql.push(" AND (");
-                for (index, spec) in specs.iter().enumerate() {
-                    if index > 0 {
-                        sql.push(" OR ");
-                    }
-                    sql.push("(")
-                        .push(alias)
-                        .push(".schema_id = $")
-                        .push_u64((placeholder + index) as u64)
-                        .push(" AND EXISTS (SELECT 1 FROM ")
-                        .push_ident(&spec.table)
-                        .push(" c WHERE c.")
-                        .push_ident(&spec.key_column)
-                        .push(" = ")
-                        .push(alias)
-                        .push(".t AND c.")
-                        .push_ident(&spec.tag_column)
-                        .push(" ")
-                        .push(op)
-                        .push(" $")
-                        .push_u64(tags_placeholder)
-                        .push("::text[] OFFSET 0))");
-                }
-                sql.push(")");
+                sql.push_text(&tag_predicate(
+                    alias,
+                    specs,
+                    placeholder,
+                    tags_placeholder,
+                    *tag_match,
+                ));
             }
         }
         sql
@@ -258,6 +233,47 @@ impl MemoryFilter {
             Self::Schema(_) | Self::Ids(_) | Self::ReferencedGoalHandles(_) | Self::Cursor(_) => 1,
         }
     }
+}
+
+// Keep each lookup correlated to its memory key: pulling it up can rescan
+// the sidecar's RLS visibility relation per page; OFFSET 0 preserves the one-key probe.
+pub(super) fn tag_predicate(
+    alias: &'static str,
+    specs: &[TagSpec],
+    schema_placeholder: usize,
+    tags_placeholder: u64,
+    tag_match: proxiima_core::verbs::query::TagMatch,
+) -> SqlText {
+    // `Proxiima.Query.matchesTags`.
+    let op = match tag_match {
+        proxiima_core::verbs::query::TagMatch::Any => "&&",
+        proxiima_core::verbs::query::TagMatch::All => "@>",
+    };
+    let mut sql = SqlText::new(" AND (");
+    for (index, spec) in specs.iter().enumerate() {
+        if index > 0 {
+            sql.push(" OR ");
+        }
+        sql.push("(")
+            .push(alias)
+            .push(".schema_id = $")
+            .push_u64((schema_placeholder + index) as u64)
+            .push(" AND EXISTS (SELECT 1 FROM ")
+            .push_ident(&spec.table)
+            .push(" c WHERE c.")
+            .push_ident(&spec.key_column)
+            .push(" = ")
+            .push(alias)
+            .push(".t AND c.")
+            .push_ident(&spec.tag_column)
+            .push(" ")
+            .push(op)
+            .push(" $")
+            .push_u64(tags_placeholder)
+            .push("::text[] OFFSET 0))");
+    }
+    sql.push(")");
+    sql
 }
 
 /// Every filter the request asks for, in bind order.

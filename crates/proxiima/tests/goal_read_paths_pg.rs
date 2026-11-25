@@ -203,6 +203,40 @@ async fn goal_route_counts_latest_visible_series_once() {
         )
         .await
         .expect("grant");
+    let mut search_request = SearchReadRequest {
+        search: MemorySearchRequest {
+            scope: MemorySearchScope::Readable,
+            read_owners: Vec::new(),
+            query: Some("private successor".into()),
+            mode: SearchMode::Lexical,
+            supersession: SupersessionStatus::HeadsOnly,
+            limit: 1,
+            kind: Some(EntityKind::Perspective),
+            schema_id: None,
+            exclude_schema_ids: Vec::new(),
+            tags: Vec::new(),
+            tag_match: TagMatch::default(),
+            since: None,
+            until: None,
+            order: SearchOrder::Relevance,
+            min_score: None,
+            semantic_weight: None,
+            after: None,
+            semantic: None,
+        },
+        include_body: false,
+        include_neighbor_edges: false,
+    };
+    let mut listing_request = search_request.clone();
+    listing_request.search.query = None;
+    listing_request.search.order = SearchOrder::Recency;
+    let published_listing = host
+        .engine
+        .search(&guest_auth, &listing_request)
+        .await
+        .expect("listing retains the published head below a private successor");
+    assert_eq!(published_listing.memories.len(), 1);
+    assert_eq!(published_listing.memories[0].memory_id, first);
     let head = host
         .engine
         .get_memory(
@@ -253,36 +287,24 @@ async fn goal_route_counts_latest_visible_series_once() {
         .expect("publish private successor");
     let search = host
         .engine
-        .search(
-            &guest_auth,
-            &SearchReadRequest {
-                search: MemorySearchRequest {
-                    scope: MemorySearchScope::Readable,
-                    read_owners: Vec::new(),
-                    query: "private successor".into(),
-                    mode: SearchMode::Lexical,
-                    supersession: SupersessionStatus::HeadsOnly,
-                    limit: 1,
-                    kind: Some(EntityKind::Perspective),
-                    schema_id: None,
-                    tags: Vec::new(),
-                    tag_match: TagMatch::default(),
-                    since: None,
-                    until: None,
-                    order: SearchOrder::Relevance,
-                    min_score: None,
-                    semantic_weight: None,
-                    after: None,
-                    semantic: None,
-                },
-                include_body: false,
-                include_neighbor_edges: false,
-            },
-        )
+        .search(&guest_auth, &search_request)
         .await
         .expect("Goal-readable search");
     assert_eq!(search.memories.len(), 1);
     assert_eq!(search.memories[0].memory_id, private.memory_id);
+    search_request.search.query = None;
+    search_request.search.order = SearchOrder::Recency;
+    search_request.include_body = true;
+    search_request.include_neighbor_edges = true;
+    let listing = host
+        .engine
+        .search(&guest_auth, &search_request)
+        .await
+        .expect("Goal-readable listing");
+    assert_eq!(listing.memories.len(), 1);
+    assert_eq!(listing.memories[0].memory_id, private.memory_id);
+    assert_eq!(listing.memories[0].score, 0.0);
+    assert!(!listing.payloads.is_empty(), "listing hydrates bodies");
     let owner_search = host
         .engine
         .search(
@@ -291,12 +313,13 @@ async fn goal_route_counts_latest_visible_series_once() {
                 search: MemorySearchRequest {
                     scope: MemorySearchScope::Owner(owner_id),
                     read_owners: Vec::new(),
-                    query: "published".into(),
+                    query: Some("published".into()),
                     mode: SearchMode::Lexical,
                     supersession: SupersessionStatus::HeadsOnly,
                     limit: 1,
                     kind: Some(EntityKind::Perspective),
                     schema_id: None,
+                    exclude_schema_ids: Vec::new(),
                     tags: Vec::new(),
                     tag_match: TagMatch::default(),
                     since: None,
