@@ -84,10 +84,3 @@ as part of open-source and commercial offerings. Mechanism:
 3. DCO sign-off (`Signed-off-by:` trailer) is welcome but does not substitute
    for the CLA
 
-## Why Apache-2.0 for the Core
-
-Apache-2.0 removes legal adoption friction for developers and enterprises who
-want to audit, embed, or self-host the core memory substrate (`Facts`,
-`Abstractions`, `Perspectives`, `Goals`, provenance, and PostgreSQL RLS) while
-commercial cloud UX, domain spiices, agent orchestration, and hardware trust
-remain cleanly separated in Aquilo Solution.S GmbH's commercial offerings.
