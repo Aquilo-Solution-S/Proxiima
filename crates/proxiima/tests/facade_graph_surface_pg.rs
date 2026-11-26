@@ -1709,6 +1709,69 @@ async fn serving_boot_refuses_stale_search_definitions_until_explicit_migration(
     repaired.shutdown().await;
 }
 
+/// Give the generated lexical function `volatility`, as its owner can.
+async fn set_lexical_volatility(db: &proxiima_pg_testkit::SplitRoleDb, volatility: &'static str) {
+    let platform = sqlx::PgPool::connect(db.platform_url())
+        .await
+        .expect("platform connection");
+    let mut transaction = platform.begin().await.expect("platform transaction");
+    sqlx::query("SET LOCAL ROLE proxiima_search")
+        .execute(&mut *transaction)
+        .await
+        .expect("candidate role");
+    let mut alter = proxiima_core::SqlText::new("ALTER FUNCTION ");
+    alter
+        .push(FACADE_LEXICAL_SIGNATURE)
+        .push(" ")
+        .push(volatility);
+    sqlx::query(alter)
+        .execute(&mut *transaction)
+        .await
+        .expect("alter the generated function's volatility");
+    transaction.commit().await.expect("commit volatility");
+    platform.close().await;
+}
+
+/// Preflight reads the lexical function's volatility. One the release no
+/// longer declares is stale, and migration replaces it; an `IMMUTABLE`
+/// one, whose result PostgreSQL may reuse across snapshots, is refused as
+/// a configuration nothing generates.
+#[tokio::test]
+async fn search_definitions_check_the_lexical_function_volatility() {
+    let split_db = clone_split_core_db("facade_search_definition_volatility")
+        .await
+        .expect("PG required");
+    migrate_facade(&split_db).await;
+
+    set_lexical_volatility(&split_db, "VOLATILE").await;
+    let preflight = facade_preflight(&split_db).await;
+    assert!(
+        matches!(
+            preflight,
+            Err(proxiima::MigrationError::SearchDefinitions(
+                proxiima_core::StorageError::MigrationRequired { .. }
+            ))
+        ),
+        "a stale volatility must fail read-only preflight: {preflight:?}"
+    );
+    migrate_facade(&split_db).await;
+    facade_preflight(&split_db)
+        .await
+        .expect("migration restores the generated volatility");
+
+    set_lexical_volatility(&split_db, "IMMUTABLE").await;
+    let preflight = facade_preflight(&split_db).await;
+    assert!(
+        matches!(
+            preflight,
+            Err(proxiima::MigrationError::SearchDefinitions(
+                proxiima_core::StorageError::ConstraintViolation(_)
+            ))
+        ),
+        "an immutable candidate function must be refused: {preflight:?}"
+    );
+}
+
 #[tokio::test]
 async fn composed_search_migration_refuses_unexpected_candidate_overload() {
     let split_db = clone_split_core_db("facade_search_definition_overload")
