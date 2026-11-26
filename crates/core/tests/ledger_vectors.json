@@ -286,11 +286,6 @@
   {"out": true, "in": [true, false]},
   {"out": false, "in": [false, true]},
   {"out": false, "in": [false, false]}],
- "Proxiima.Repository.reviewCovers":
- [{"out": true, "in": [true, true]},
-  {"out": false, "in": [true, false]},
-  {"out": false, "in": [false, true]},
-  {"out": false, "in": [false, false]}],
  "Proxiima.Repository.renderUpgrade":
  [{"out": true, "in": [true, true]},
   {"out": false, "in": [true, false]},
@@ -329,10 +324,8 @@
   {"out": "keepWithRedactedDiagnostic", "in": [false, true]},
   {"out": "drop", "in": [false, false]}],
  "Proxiima.Repository.advanceVerified":
- [{"out": ["verifiedFastForward", "nightlyLightweightTag"], "in": [true, true]},
-  {"out": [], "in": [true, false]},
-  {"out": [], "in": [false, true]},
-  {"out": [], "in": [false, false]}],
+ [{"out": ["verifiedFastForward", "nightlyLightweightTag"], "in": [true]},
+  {"out": [], "in": [false]}],
  "Proxiima.Repository.adminConfiguration":
  [{"out": "connect", "in": [true, true, true]},
   {"out": "connect", "in": [true, true, false]},

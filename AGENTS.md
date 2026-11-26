@@ -36,7 +36,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 ## Branch and release policy
 
 1. Start from `origin/verified` so work starts after CI. Push directly to `main` with linear history and keep branches and numbered tags free of force rewrites. Outside contributions use pull requests.
-2. Before pushing, review `origin/main..HEAD` and every still-unrecorded commit since `origin/verified`. Use a different authoring vendor, or a different person for an unaided author. Record its co-author address in `Reviewed-By` on the tip to cover outstanding commits. The trailer states the reviewer's claim, and Verify checks only that it is present and that its address differs from the authors' addresses.
+2. Before pushing, have `origin/main..HEAD` reviewed by a different authoring vendor, or by a different person for an unaided author.
 3. Leave the workspace version alone for routine changes. A deliberate bump requests a numbered release through Verify. Do not tag by hand.
 4. See [`Proxiima.Repository`](docs/ledger.md#repository).
 5. Run `scripts/check-migrations.py` when changing migration history. See

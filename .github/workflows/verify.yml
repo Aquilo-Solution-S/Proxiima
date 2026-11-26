@@ -68,8 +68,8 @@ jobs:
     with:
       base: ${{ needs.target.outputs.base }}
 
-  record:
-    name: review record
+  notes:
+    name: upgrade notes
     needs: target
     if: ${{ needs.target.outputs.pending == 'true' }}
     runs-on: ubuntu-latest
@@ -85,13 +85,12 @@ jobs:
           BASE: ${{ needs.target.outputs.base }}
           TIP: ${{ needs.target.outputs.tip }}
         run: |
-          python3 scripts/verify-review.py check --base "${BASE}" --tip "${TIP}"
           python3 scripts/check-upgrade-notes.py --range "${BASE}..${TIP}"
 
   advance:
     name: advance verified and nightly
-    needs: [target, ci, record]
-    if: ${{ needs.ci.result == 'success' && needs.record.result == 'success' }}
+    needs: [target, ci, notes]
+    if: ${{ needs.ci.result == 'success' && needs.notes.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

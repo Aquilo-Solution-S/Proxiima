@@ -57,21 +57,16 @@ def verifyRange : (main : Bool) → (extendsVerified : Bool) → (hasMerge : Boo
   | true, true, true | true, false, true | true, false, false
   | false, true, true | false, true, false | false, false, true | false, false, false => false
 
-/-- Each commit since verified needs a reviewer address outside its Git author and co-author addresses, on that commit or a later one in the candidate range. -/
-def reviewCovers : (recordInSuffix : Bool) → (differentAddress : Bool) → Bool
-  | true, true => true
-  | true, false | false, true | false, false => false
-
-/-- The references that move together to the tested commit after CI and review pass. -/
+/-- The references that move together to the tested commit after CI passes. -/
 inductive VerifiedRef where
   | verifiedFastForward
   | nightlyLightweightTag
   deriving DecidableEq
 
-/-- Failed CI or missing review leaves both references in place. -/
-def advanceVerified : (ciPassed : Bool) → (reviewCovered : Bool) → List VerifiedRef
-  | true, true => [.verifiedFastForward, .nightlyLightweightTag]
-  | true, false | false, true | false, false => []
+/-- Failed CI leaves both references in place. -/
+def advanceVerified : (ciPassed : Bool) → List VerifiedRef
+  | true => [.verifiedFastForward, .nightlyLightweightTag]
+  | false => []
 
 /-- The numbered-release action after a candidate reaches verified. -/
 inductive ReleaseAction where

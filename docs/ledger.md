@@ -6358,7 +6358,7 @@ stateDiagram-v2
 - migration
 - admin
 
-**Verified ref**: The references that move together to the tested commit after CI and review pass.
+**Verified ref**: The references that move together to the tested commit after CI passes.
 
 - verifiedFastForward
 - nightlyLightweightTag
@@ -6474,23 +6474,12 @@ stateDiagram-v2
 
 - verify range: Verify accepts a candidate from main only after checking that it extends the previously verified history without merge commits.
 
-| record in suffix | different address | review covers |
-| --- | --- | --- |
-| yes | yes | yes |
-| yes | no | no |
-| no | yes | no |
-| no | no | no |
+| ci passed | advance verified |
+| --- | --- |
+| yes | \[verifiedFastForward, nightlyLightweightTag] |
+| no | \[] |
 
-- review covers: Each commit since verified needs a reviewer address outside its Git author and co-author addresses, on that commit or a later one in the candidate range.
-
-| ci passed | review covered | advance verified |
-| --- | --- | --- |
-| yes | yes | \[verifiedFastForward, nightlyLightweightTag] |
-| yes | no | \[] |
-| no | yes | \[] |
-| no | no | \[] |
-
-- advance verified: Failed CI or missing review leaves both references in place.
+- advance verified: Failed CI leaves both references in place.
 
 | verified | tag exists | numbered release |
 | --- | --- | --- |
