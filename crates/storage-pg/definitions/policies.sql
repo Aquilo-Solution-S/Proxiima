@@ -108,7 +108,7 @@ BEGIN
                 memory_key := proxiima_core.owner_rls_memory_key(caller,target_schema,target_table);
             END IF;
             IF memory_key IS NOT NULL THEN
-                read_expr := format('(%s) OR EXISTS (SELECT 1 FROM proxiima_core.memory parent WHERE parent.t=%I.%I.%I AND parent.owner_id=%I.%I.%I AND proxiima_core.goal_memory_read_admitted(parent.t))',
+                read_expr := format($expr$(%s) OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (SELECT 1 FROM proxiima_core.memory parent WHERE parent.t=%I.%I.%I AND parent.owner_id=%I.%I.%I AND proxiima_core.goal_memory_read_admitted(parent.t)))$expr$,
                     read_expr,target_schema,target_table,memory_key,target_schema,target_table,owner_column);
             END IF;
         WHEN 'memory_owner' THEN
@@ -189,17 +189,17 @@ SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'pr
 -- The immutable blob identity is distinct from mutable upload routing.
 ALTER POLICY proxiima_owner_read ON proxiima_core.blob USING (
     owner_id=ANY(COALESCE(NULLIF(current_setting('app.owner',true),'')::uuid[],'{}'))
-    OR EXISTS (SELECT 1 FROM proxiima_core.memory cited
+    OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (SELECT 1 FROM proxiima_core.memory cited
                WHERE cited.blob_id=blob.blob_id AND cited.owner_id=blob.owner_id
                  AND cited.kind='fact' AND cited.forgotten_at IS NULL
-                 AND proxiima_core.goal_memory_read_admitted(cited.t))
+                 AND proxiima_core.goal_memory_read_admitted(cited.t)))
 );
 
 -- blob_uploads
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'proxiima_core', 'blob_uploads', 'owner_id', 'owner_id');
 ALTER POLICY proxiima_owner_read ON proxiima_core.blob_uploads USING (
     owner_id=ANY(COALESCE(NULLIF(current_setting('app.owner',true),'')::uuid[],'{}'))
-    OR (status='completed' AND EXISTS (
+    OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND status='completed' AND EXISTS (
         SELECT 1 FROM proxiima_core.goal_memory_publication publication
         JOIN proxiima_core.memory cited ON cited.t=publication.memory_t
         JOIN proxiima_core.goal_memory_read_routes() route
@@ -327,9 +327,9 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.goal_head USING ((owner_id = 
 -- connection; neither network inputs nor spiices may supply scope SQL.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'goal_access_grant', 'ownerless', NULL);
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_access_grant USING (
-    EXISTS (SELECT 1 FROM proxiima_core.goal_grants_held() held
+    (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (SELECT 1 FROM proxiima_core.goal_grants_held() held
              WHERE held.goal_handle = proxiima_core.goal_access_grant.goal_handle
-               AND held.subject_id = proxiima_core.goal_access_grant.subject_id)
+               AND held.subject_id = proxiima_core.goal_access_grant.subject_id))
     OR EXISTS (SELECT 1 FROM proxiima_core.goal_head h
                WHERE h.handle = proxiima_core.goal_access_grant.goal_handle
                  AND h.owner_id = ANY (COALESCE(NULLIF(current_setting('app.read_goal', true), '')::uuid[], '{}'::uuid[])))
@@ -338,9 +338,9 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.goal_access_grant USING (fals
 
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'goal_memory_publication', 'ownerless', NULL);
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_memory_publication USING (
-    EXISTS (SELECT 1 FROM proxiima_core.goal_memory_read_routes() route
+    (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (SELECT 1 FROM proxiima_core.goal_memory_read_routes() route
              WHERE route.goal_handle=goal_memory_publication.goal_handle
-               AND route.memory_t=goal_memory_publication.memory_t)
+               AND route.memory_t=goal_memory_publication.memory_t))
     OR EXISTS (SELECT 1 FROM proxiima_core.memory source
                 WHERE source.t=goal_memory_publication.memory_t
                   AND source.owner_id=ANY(CASE source.kind
@@ -352,9 +352,9 @@ ALTER POLICY proxiima_owner_write ON proxiima_core.goal_memory_publication USING
 
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class ownerless', 'proxiima_core', 'goal_work_binding', 'ownerless', NULL);
 ALTER POLICY proxiima_owner_read ON proxiima_core.goal_work_binding USING (
-    EXISTS (SELECT 1 FROM proxiima_core.goal_memory_read_routes() route
+    (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (SELECT 1 FROM proxiima_core.goal_memory_read_routes() route
              WHERE route.goal_handle=goal_work_binding.goal_handle
-               AND route.memory_handle=goal_work_binding.memory_handle)
+               AND route.memory_handle=goal_work_binding.memory_handle))
     OR EXISTS (SELECT 1 FROM proxiima_core.memory_head h WHERE h.handle=goal_work_binding.memory_handle)
 );
 ALTER POLICY proxiima_owner_write ON proxiima_core.goal_work_binding USING (false) WITH CHECK (false);
@@ -583,8 +583,9 @@ SELECT proxiima_core.owner_rls_apply_class(
 -- the platform scope drains it.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'proxiima_core', 'vector_index_debt', 'owner_id', 'owner_id');
 
--- Add exact Goal routes after the owner predicates. A head remains owner-only:
--- publishing an old version never reveals its private global successor.
+-- Add exact Goal routes after the owner predicates, asked only with a Goal
+-- subject. A head remains owner-only: publishing an old version never reveals
+-- its private global successor.
 DO $goal_routes$
 DECLARE relation_name text; predicate text; extra text;
 BEGIN
@@ -600,7 +601,7 @@ BEGIN
           WHEN 'content' THEN 'EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.content_id = content.content_id AND m.owner_id = content.owner_id AND proxiima_core.goal_memory_read_admitted(m.t))'
           WHEN 'sketch' THEN 'EXISTS (SELECT 1 FROM proxiima_core.memory m WHERE m.t=sketch.t AND m.owner_id=sketch.owner_id AND proxiima_core.goal_memory_read_admitted(m.t)) OR EXISTS (SELECT 1 FROM proxiima_core.goal g WHERE g.t=sketch.t AND g.owner_id=sketch.owner_id AND proxiima_core.goal_read_admitted(g.t))'
         END;
-        EXECUTE format('ALTER POLICY proxiima_owner_read ON proxiima_core.%I USING ((%s) OR (%s))', relation_name, predicate, extra);
+        EXECUTE format($sql$ALTER POLICY proxiima_owner_read ON proxiima_core.%I USING ((%s) OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND (%s)))$sql$, relation_name, predicate, extra);
     END LOOP;
 END
 $goal_routes$;

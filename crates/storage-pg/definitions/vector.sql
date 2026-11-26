@@ -66,7 +66,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -104,7 +106,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -133,7 +137,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -210,7 +216,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -248,7 +256,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -277,7 +287,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -354,7 +366,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -392,7 +406,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -421,7 +437,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -498,7 +516,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -536,7 +556,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -565,7 +587,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -642,7 +666,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -680,7 +706,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -709,7 +737,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -786,7 +816,9 @@ BEGIN
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
@@ -824,7 +856,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible
@@ -853,7 +887,9 @@ BEGIN
                   AND head.dim = s.dim
                   AND head.embedding_version = s.embedding_version
                   AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                 LIMIT 1) eligible

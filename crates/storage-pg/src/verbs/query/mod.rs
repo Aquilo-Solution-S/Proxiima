@@ -41,14 +41,15 @@ pub(crate) use lineage::{
 pub(crate) use memories::query_memories_on_connection;
 #[cfg(any(test, feature = "testkit"))]
 pub use memories::{memory_page_sql_for_tests, memory_page_sql_for_tests_with_schemas};
-pub(crate) use search::search_memories_on_connection;
 pub(crate) use search::{
     LexicalCandidates, RankedCandidates, StagedCandidates, SubstringCandidates,
     projection_ranked_candidates, projection_substring_candidates,
 };
+pub(crate) use search::{SEARCH_OWNERS_SQL, search_memories_on_connection};
 #[cfg(any(test, feature = "testkit"))]
 pub use search::{
-    ranked_candidate_sql_for_tests, ranked_projection_sql_for_tests, search_admit_sql_for_tests,
+    goal_visible_memories_sql_for_tests, ranked_candidate_sql_for_tests,
+    ranked_projection_sql_for_tests, search_admit_sql_for_tests, search_owners_sql_for_tests,
     semantic_candidate_admission_sql_for_tests, staged_candidate_sql_for_tests,
     substring_candidate_sql_for_tests, substring_sql_for_tests,
 };

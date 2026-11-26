@@ -405,7 +405,7 @@ impl ListingNarrowing<'_> {
             .push_u64(fetch_limit)
             .push(") page WHERE o.owner_id = ANY($1::uuid[])) UNION (SELECT m.t FROM ")
             .push(goal_source)
-            .push(" v JOIN proxiima_core.live_memory m ON m.t = v.memory_t WHERE v.owner_id = ANY($1::uuid[])")
+            .push(" v JOIN proxiima_core.live_memory m ON m.t = v.memory_t WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND v.owner_id = ANY($1::uuid[])")
             .push_text(&self.predicates("m"))
             .push(" ORDER BY m.t DESC LIMIT ")
             .push_u64(fetch_limit)
@@ -1391,7 +1391,8 @@ fn candidate_statement(
     let admit = candidate_authorization("p.memory_id", &SqlText::new(""));
     let mut tags = SqlText::new(
         " AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))",
+                   OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                       AND p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))))",
     );
     tags.push_text(&candidate_tags(&SqlText::new("p.tag")));
     let rescue_switch = match side {
@@ -1561,9 +1562,13 @@ fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> Sq
     .push(memory_id)
     .push(" \
          AND (authorized_memory.owner_id = ANY($7::uuid[]) \
-              OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) \
+              OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL \
+                  AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) \
          AND ($11::text IS NULL OR authorized_memory.kind::text = $11) \
-         AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head \
+         AND (NOT $10::boolean \
+              OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL \
+                  AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) \
+              OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head \
          WHERE authorized_head.owner_id = authorized_memory.owner_id \
          AND authorized_head.t = authorized_memory.t \
          AND authorized_head.handle = authorized_memory.handle")
@@ -1756,7 +1761,8 @@ fn search_admit_sql(heads_only: bool) -> SqlText {
     let head_filter = if heads_only {
         " AND (EXISTS (SELECT 1 FROM proxiima_core.memory_head h
                         WHERE h.owner_id = m.owner_id AND h.handle = m.handle AND h.t = m.t)
-                OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))"
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())))"
     } else {
         ""
     };
@@ -1768,7 +1774,8 @@ fn search_admit_sql(heads_only: bool) -> SqlText {
            FROM proxiima_core.live_memory m
           WHERE m.t = ANY($1::uuid[])
             AND (m.owner_id = ANY($2::uuid[])
-                 OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[])))
+                 OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                     AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[]))))
             AND ($3::text IS NULL OR m.kind::text = $3)
             AND ($4::text IS NULL OR m.schema_id = $4)
             AND ($5::timestamptz IS NULL
@@ -1896,7 +1903,8 @@ fn semantic_candidate_admission_sql(
         .push(" p
                           WHERE p.memory_id = m.t
                             AND (p.owner_id = ANY($2::uuid[])
-                                 OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[])))
+                                 OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                                     AND p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($2::uuid[]))))
                             AND p.schema_id = ANY(")
         .push_text(&schema_bind_sql)
         .push("::text[])")
@@ -1928,15 +1936,7 @@ async fn remote_candidate_filter(
     let owners: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT owner_id FROM unnest(proxiima_core.search_owner_ids()) owner_id WHERE owner_id=ANY($1::uuid[])",
     ).bind(&selectors).fetch_all(connection.as_mut()).await.map_err(map_err)?;
-    let sql = match req.supersession {
-        SupersessionStatus::HeadsOnly => {
-            "SELECT memory_t FROM proxiima_core.goal_visible_memory_heads() WHERE owner_id=ANY($1::uuid[])"
-        }
-        SupersessionStatus::IncludeSuperseded => {
-            "SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($1::uuid[])"
-        }
-    };
-    let memories: Vec<uuid::Uuid> = sqlx::query_scalar(sql)
+    let memories: Vec<uuid::Uuid> = sqlx::query_scalar(goal_visible_memories_sql(req.supersession))
         .bind(&selectors)
         .fetch_all(connection.as_mut())
         .await
@@ -1946,6 +1946,29 @@ async fn remote_candidate_filter(
         memories: memories.into_iter().map(MemoryId::new).collect(),
     })
 }
+
+/// The memories of `$1`'s owners a Goal shows the caller, each series' head
+/// or every version, asked only with a Goal subject.
+fn goal_visible_memories_sql(supersession: SupersessionStatus) -> &'static str {
+    match supersession {
+        SupersessionStatus::HeadsOnly => {
+            "SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()
+              WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                AND owner_id=ANY($1::uuid[])"
+        }
+        SupersessionStatus::IncludeSuperseded => {
+            "SELECT memory_t FROM proxiima_core.goal_visible_memory_ids()
+              WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                AND owner_id=ANY($1::uuid[])"
+        }
+    }
+}
+
+/// The owners an owner search may name: the scope's own, and with a Goal
+/// subject those whose memories a Goal shows the caller.
+pub(crate) const SEARCH_OWNERS_SQL: &str = "SELECT proxiima_core.search_owner_ids() || ARRAY(
+    SELECT DISTINCT owner_id FROM proxiima_core.goal_visible_memory_ids()
+     WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL)";
 
 // Owner roles can stop below Perspective. Their index stream may therefore
 // contain higher-kind rows that RLS will reject. Give exact Goal publications
@@ -2384,6 +2407,22 @@ pub fn semantic_candidate_admission_sql_for_tests(
 #[must_use]
 pub fn search_admit_sql_for_tests(heads_only: bool) -> SqlText {
     search_admit_sql(heads_only)
+}
+
+/// The remote vector filter's Goal-visible memories, binding `$1`, the owners.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+#[must_use]
+pub fn goal_visible_memories_sql_for_tests(supersession: SupersessionStatus) -> SqlText {
+    SqlText::new(goal_visible_memories_sql(supersession))
+}
+
+/// The statement that narrows an owner search's named owners.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+#[must_use]
+pub fn search_owners_sql_for_tests() -> SqlText {
+    SqlText::new(SEARCH_OWNERS_SQL)
 }
 
 #[cfg(test)]

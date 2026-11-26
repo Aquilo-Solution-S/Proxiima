@@ -287,11 +287,14 @@ END;
 }
 
 /// What `heads_only` (`$5`) admits of a candidate memory `m`: a head a Goal
-/// shows the caller, or the head of `m`'s own series. A head has its
-/// versions' owner (`Proxiima.Identity.seriesContract`), so it is looked up
-/// among `m.owner_id`'s heads alone.
+/// shows the caller, asked only with a Goal subject, or the head of `m`'s own
+/// series. A head has its versions' owner
+/// (`Proxiima.Identity.seriesContract`), so it is looked up among
+/// `m.owner_id`'s heads alone.
 const HEADS_ONLY_FILTER: &str = "
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+           AND (NOT $5::boolean
+                OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+                    AND m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))";
 
