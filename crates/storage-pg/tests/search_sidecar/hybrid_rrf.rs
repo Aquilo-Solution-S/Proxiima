@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+const HYBRID_WINDOW: usize = proxiima_core::ledger!(Proxiima.Search.hybridWindow);
+
 fn assert_score(actual: f32, expected: f32) {
     assert_eq!(
         actual.to_bits(),
@@ -158,10 +160,10 @@ async fn seed_window_notes(
     pool: &sqlx::PgPool,
     owner: OwnerId,
 ) -> Result<Vec<Uuid>, Box<dyn std::error::Error>> {
-    let ids: Vec<_> = (0..1_001).map(|_| Uuid::now_v7()).collect();
+    let ids: Vec<_> = (0..=HYBRID_WINDOW).map(|_| Uuid::now_v7()).collect();
     create_user(pool, owner.as_user()).await?;
     let mut stamped = pool.begin().await?;
-    // Raw INSERT on purpose: bulk volume, a thousand notes in one transaction.
+    // Raw INSERT on purpose: bulk volume, a window of notes in one transaction.
     sqlx::query(
         "INSERT INTO proxiima_core.memory_head (handle, t, kind, schema_id, owner_id)
          SELECT t, t, 'fact', 'core/agent-note-v1', $2 FROM unnest($1::uuid[]) AS t",
@@ -170,7 +172,7 @@ async fn seed_window_notes(
     .bind(owner.into_inner())
     .execute(&mut *stamped)
     .await?;
-    // Raw INSERT on purpose: bulk volume, a thousand notes in one transaction.
+    // Raw INSERT on purpose: bulk volume, a window of notes in one transaction.
     sqlx::query(
         "INSERT INTO proxiima_core.memory
              (handle, t, kind, schema_id, owner_id, sidecar_tables, occurred_at, \"by\", via)
@@ -182,7 +184,7 @@ async fn seed_window_notes(
     .bind(owner.into_inner())
     .execute(&mut *stamped)
     .await?;
-    // Raw INSERT on purpose: bulk volume, a thousand notes in one transaction.
+    // Raw INSERT on purpose: bulk volume, a window of notes in one transaction.
     sqlx::query(
         "INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
          SELECT t, t, 'quartz', 'Window membership', '{}'::text[] FROM unnest($1::uuid[]) AS t",
@@ -205,7 +207,7 @@ async fn hybrid_cursor_pages_end_at_fixed_window_in_both_orders() -> TestResult 
     let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
     let mut ids = seed_window_notes(pg.pool_for_tests(), owner).await?;
     ids.sort_unstable_by(|a, b| b.cmp(a));
-    let expected: BTreeSet<_> = ids[..1_000].iter().copied().collect();
+    let expected: BTreeSet<_> = ids[..HYBRID_WINDOW].iter().copied().collect();
     let projection = note_projection();
     let mut req = hybrid_request(owner, "quartz");
     for order in [SearchOrder::Relevance, SearchOrder::Recency] {
@@ -254,7 +256,7 @@ async fn hybrid_cursor_pages_end_at_fixed_window_in_both_orders() -> TestResult 
         }
         assert_eq!(
             seen, expected,
-            "the fixed window is complete and excludes its 1,001st hit"
+            "the fixed window is complete and excludes the hit just past it"
         );
         let exhausted = pg
             .search_memories(

@@ -6863,7 +6863,7 @@ stateDiagram-v2
 
 **hybrid semantic weight tenths** = 5: The default semantic weight on a ten-point scale.
 
-**hybrid window** = 1000: The fixed candidate horizon per hybrid leg.
+**hybrid window** = 200: The fixed candidate horizon per hybrid leg.
 
 **core projection cap** = 1000: The core projection candidate limit per statement.
 

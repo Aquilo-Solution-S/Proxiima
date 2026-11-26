@@ -30,7 +30,7 @@ def rankOffset : Nat := 60
 def hybridSemanticWeightTenths : Nat := 5
 
 /-- The fixed candidate horizon per hybrid leg. -/
-def hybridWindow : Nat := 1000
+def hybridWindow : Nat := 200
 
 /-- The core projection candidate limit per statement. -/
 def coreProjectionCap : Nat := 1000
