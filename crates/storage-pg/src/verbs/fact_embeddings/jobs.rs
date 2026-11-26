@@ -21,7 +21,9 @@ use crate::sidecars::int_to_u64;
 /// One arm: `status = 'pending'`, minus failed-route Owners and exact
 /// Owner/space pairs whose clients are blocked. Rides
 /// `embedding_jobs_pending_claim_idx (COALESCE(retry_position, job_id), job_id)
-/// WHERE status = 'pending'`. Locked unclaimed rows release with the statement's
+/// WHERE status = 'pending'`. The `cardinality` arm keeps the blocked pairs a
+/// hashed `SubPlan`: pulled up into an anti-join, they were scanned once per row
+/// the claim walked past. Locked unclaimed rows release with the statement's
 /// transaction. `claimed_at` is what makes a crashed drainer's row
 /// recoverable ([`reclaim_stale_embedding_jobs`]); there is no
 /// `next_attempt_at` column. Each claim also gets a fencing token so a
@@ -34,13 +36,13 @@ const CLAIM_EMBEDDING_JOBS_SQL: &str = "WITH claimed AS (
                FROM proxiima_core.embedding_jobs
               WHERE status = 'pending'
                 AND owner_id <> ALL($2::uuid[])
-                AND NOT EXISTS (
+                AND (cardinality($3::uuid[]) = 0 OR NOT EXISTS (
                     SELECT 1 FROM unnest($3::uuid[], $4::text[], $5::smallint[])
                         AS blocked(owner_id, model_id, dim)
                     WHERE blocked.owner_id = embedding_jobs.owner_id
                       AND blocked.model_id = embedding_jobs.model_id
                       AND blocked.dim = embedding_jobs.dim
-                )
+                ))
               ORDER BY COALESCE(retry_position, job_id) ASC, job_id ASC
               FOR UPDATE SKIP LOCKED
               LIMIT $1
@@ -77,17 +79,14 @@ pub fn claim_embedding_jobs_sql_for_tests() -> &'static str {
     CLAIM_EMBEDDING_JOBS_SQL
 }
 
-/// `Proxiima.Embeddings.settleClaim`. Rides the partial `embedding_jobs_processing_idx`.
+/// `Proxiima.Embeddings.settleClaim`. An index condition on the partial
+/// `embedding_jobs_processing_idx`.
 const RECLAIM_STALE_EMBEDDING_JOBS_SQL: &str = "UPDATE proxiima_core.embedding_jobs
             SET status = 'pending',
                 claimed_at = NULL,
                 claim_token = NULL
           WHERE status = 'processing'
-            AND (
-                claimed_at IS NULL
-                OR claimed_at < now()
-                    - make_interval(secs => ($1::bigint)::double precision)
-            )";
+            AND claimed_at < now() - make_interval(secs => ($1::bigint)::double precision)";
 
 /// The reclaim statement, for EXPLAIN-based plan guards.
 #[cfg(any(test, feature = "testkit"))]
@@ -546,9 +545,9 @@ async fn exit_claims(
 /// Return `processing` jobs claimed more than `older_than_seconds` ago to
 /// `pending`.
 ///
-/// The one recovery path for a drainer that died holding a claim. Rows with
-/// no `claimed_at` at all are stale by definition — nothing can date them,
-/// so nothing else can ever free them.
+/// The one recovery path for a drainer that died holding a claim.
+/// `embedding_job_processing_claim_chk` gives every `processing` row a
+/// `claimed_at`, so the claim's age alone dates it.
 ///
 /// # Errors
 ///

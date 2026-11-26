@@ -1150,6 +1150,60 @@ mod pg_tests {
         result
     }
 
+    /// A forget takes its memory's pending job out of the queue in its own
+    /// transaction, so a forgotten head of the queue holds back no claim: the
+    /// next claim takes the next live job.
+    #[tokio::test]
+    async fn a_forget_takes_its_pending_job_out_of_the_queue()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, db_name) = fresh_pg("proxiima_spg_embed").await;
+        let result: Result<(), Box<dyn std::error::Error>> = async {
+            let owner = owner_fixture();
+            let permit = owner_fact_write_permit(&owner).await?;
+            let mut queued = Vec::new();
+            for note in ["queued first, then forgotten", "queued second"] {
+                let written = pg
+                    .ingest_fact_atomic(&permit, &fact_draft(note), Some("stub-fact-embed"))
+                    .await?;
+                queued.push(written.memory_id);
+            }
+            let pool = pg.pool_for_tests();
+            let jobs_of = |memory: MemoryId| {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM proxiima_core.embedding_jobs WHERE entity_id = $1",
+                )
+                .bind(memory.into_inner())
+            };
+            let mut forget_tx = pool.begin().await?;
+            forget_memory(
+                &mut forget_tx,
+                &crate::core_pg_sidecars(),
+                &proxiima_core::owner_inverse::OwnerSurfaces::for_registry(
+                    &proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
+                ),
+                queued[0].into_inner(),
+                owner.into_inner(),
+            )
+            .await?;
+            assert_eq!(jobs_of(queued[0]).fetch_one(forget_tx.as_mut()).await?, 0);
+            forget_tx.commit().await?;
+
+            let claims = claim_pending_embedding_jobs(pool, 1, &[], &[]).await?;
+            assert_eq!(
+                claims
+                    .iter()
+                    .map(|claim| claim.entity_id)
+                    .collect::<Vec<_>>(),
+                [queued[1]]
+            );
+            Ok(())
+        }
+        .await;
+        drop(pg);
+        drop_db(&db_name).await?;
+        result
+    }
+
     /// A provider that rejects an input will reject it again. Requeueing such a
     /// job spins claim → reject → requeue forever, which is why the two failure
     /// causes need separate statuses.

@@ -184,11 +184,8 @@ async fn embedding_ann_observability_on_connection(
              (SELECT count(*)::bigint
                 FROM proxiima_core.embedding_jobs
                WHERE status = 'processing'
-                 AND (
-                     claimed_at IS NULL
-                     OR claimed_at < now()
-                         - make_interval(secs => ($1::bigint)::double precision)
-                 ))
+                 AND claimed_at < now()
+                     - make_interval(secs => ($1::bigint)::double precision))
                  AS stale_processing_jobs,
              (SELECT count FROM orphan_embeddings) AS orphan_embeddings,
              (SELECT count FROM orphan_heads) AS orphan_heads,

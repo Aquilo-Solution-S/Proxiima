@@ -3509,6 +3509,73 @@ END
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_grants_of(uuid) FROM PUBLIC;
 
+-- The owner policies of the embedding queue (embedding_jobs and
+-- vector_index_debt), one call each. A row is admitted by its entity: a memory
+-- at that memory's kind, as owner_rls_class_predicates admits the other
+-- memory-keyed tables, or a Goal of the row's owner; a read also by a
+-- Goal-published memory. Written inline, these EXISTS subqueries and their
+-- parents' own policies planned as SubPlans into every queue statement, the
+-- platform drain's included, whose estimated cost then crossed the JIT
+-- thresholds on every poll. A call is one qual.
+CREATE OR REPLACE FUNCTION proxiima_core.owner_rls_queue_entity_readable(row_owner uuid, row_entity uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE COST 10
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    fact_owners uuid[] := COALESCE(NULLIF(current_setting('app.owner', true), '')::uuid[], '{}');
+    goal_owners uuid[] := COALESCE(NULLIF(current_setting('app.read_goal', true), '')::uuid[], '{}');
+BEGIN
+    IF row_owner IS NULL OR row_entity IS NULL THEN
+        RETURN false;
+    END IF;
+    RETURN (row_owner = ANY(fact_owners) AND EXISTS (
+               SELECT 1 FROM proxiima_core.memory_including_forgotten AS parent
+                WHERE parent.t = row_entity
+                  AND parent.owner_id = ANY(CASE parent.kind::text
+                      WHEN 'fact' THEN fact_owners
+                      WHEN 'abstraction' THEN COALESCE(NULLIF(current_setting('app.read_abstraction', true), '')::uuid[], '{}')
+                      WHEN 'perspective' THEN COALESCE(NULLIF(current_setting('app.read_perspective', true), '')::uuid[], '{}')
+                  END)))
+        OR (row_owner = ANY(goal_owners) AND EXISTS (
+               SELECT 1 FROM proxiima_core.goal AS parent
+                WHERE parent.t = row_entity AND parent.owner_id = row_owner))
+        -- goal_memory_read_admitted admits nothing without a Goal subject.
+        OR (NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (
+               SELECT 1 FROM proxiima_core.memory_including_forgotten AS parent
+                WHERE parent.t = row_entity AND parent.owner_id = row_owner
+                  AND proxiima_core.goal_memory_read_admitted(parent.t)));
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION proxiima_core.owner_rls_queue_entity_writable(row_owner uuid, row_entity uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE COST 10
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+    fact_owners uuid[] := COALESCE(NULLIF(current_setting('app.write_owner', true), '')::uuid[], '{}');
+    goal_owners uuid[] := COALESCE(NULLIF(current_setting('app.work_goal', true), '')::uuid[], '{}');
+BEGIN
+    IF row_owner IS NULL OR row_entity IS NULL THEN
+        RETURN false;
+    END IF;
+    RETURN (row_owner = ANY(fact_owners) AND EXISTS (
+               SELECT 1 FROM proxiima_core.memory_including_forgotten AS parent
+                WHERE parent.t = row_entity
+                  AND parent.owner_id = ANY(CASE parent.kind::text
+                      WHEN 'fact' THEN fact_owners
+                      WHEN 'abstraction' THEN COALESCE(NULLIF(current_setting('app.write_abstraction', true), '')::uuid[], '{}')
+                      WHEN 'perspective' THEN COALESCE(NULLIF(current_setting('app.write_perspective', true), '')::uuid[], '{}')
+                  END)))
+        OR (row_owner = ANY(goal_owners) AND EXISTS (
+               SELECT 1 FROM proxiima_core.goal AS parent
+                WHERE parent.t = row_entity AND parent.owner_id = row_owner));
+END
+$function$;
+
 -- The host's follows rule for a pg_sidecar!(owner: follows) table: the
 -- owner_id class predicate AND the memory_owner class predicate. The
 -- owner predicate includes current-owner-aligned exact Goal publication reads. The memory half reads through the row's memory under that
