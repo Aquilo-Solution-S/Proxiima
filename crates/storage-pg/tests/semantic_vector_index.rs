@@ -33,6 +33,30 @@ struct RecordingIndex {
     puts: AtomicUsize,
     reported_bound: Option<CandidateBound>,
     reported_score: Mutex<Option<f32>>,
+    before_window: Mutex<Option<BeforeWindow>>,
+}
+
+/// A change made before the index answers `window`.
+struct BeforeWindow {
+    window: u32,
+    change: Change,
+}
+
+enum Change {
+    /// The store supersedes a note series, on its own connection.
+    Supersede {
+        pg: Box<PgStorage>,
+        owner: OwnerId,
+        handle: Uuid,
+    },
+    /// The index drops an entry whose memory the store still holds.
+    Drop(VectorKey),
+    /// The index holds a new version of an entity's vector.
+    Reembed {
+        entity: EmbeddableEntityRef,
+        owner: OwnerId,
+        vector: SpaceVector,
+    },
 }
 
 #[async_trait::async_trait]
@@ -63,6 +87,26 @@ impl VectorIndex for RecordingIndex {
         window: u32,
     ) -> Result<proxiima_core::storage_ports::VectorCandidatePage, StorageError> {
         self.windows.lock().unwrap().push(window);
+        let before = self
+            .before_window
+            .lock()
+            .unwrap()
+            .take_if(|before| before.window == window);
+        match before.map(|before| before.change) {
+            Some(Change::Supersede { pg, owner, handle }) => {
+                TestNote::new("Index result", "A later version")
+                    .handle(handle)
+                    .create(&pg, owner)
+                    .await?;
+            }
+            Some(Change::Drop(key)) => self.inner.delete(&[key]).await?,
+            Some(Change::Reembed {
+                entity,
+                owner,
+                vector,
+            }) => self.inner.put(entity, owner, 2, &[vector]).await?,
+            None => {}
+        }
         let mut page = self.inner.nearest(filter, query, window).await?;
         if let Some(bound) = self.reported_bound {
             page.bound = bound;
@@ -352,6 +396,177 @@ async fn semantic_port_expands_past_stale_foreign_and_filtered_candidates() -> T
     assert!(page.results[0].snippet.contains("Hydrated from memory"));
     assert!(!page.has_more);
     assert_eq!(*index.windows.lock().unwrap(), vec![20, 40]);
+    Ok(())
+}
+
+/// A semantic page is the last widening round's admission alone. A memory
+/// the first round admits and a commit supersedes before the second round
+/// leaves the page; the round that saw it as a head does not keep it.
+#[tokio::test]
+async fn a_version_superseded_between_widening_rounds_leaves_the_page() -> TestResult {
+    let index = Arc::new(RecordingIndex::default());
+    let (pg, _database) = fresh_pg_host_index("semantic_widening_snapshot", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let entity = |id| EmbeddableEntityRef::Memory {
+        kind: proxiima_core::MemoryKind::Fact,
+        memory_id: MemoryId::new(id),
+    };
+    let superseded = TestNote::new("Index result", "Hydrated from memory")
+        .tags(&["wanted"])
+        .create(&pg, owner)
+        .await?;
+    let kept = seed_note(&pg, owner, "wanted").await?;
+    index
+        .put(
+            entity(superseded.memory_id.into_inner()),
+            owner,
+            1,
+            &[vector(1.0)],
+        )
+        .await?;
+    index.put(entity(kept), owner, 1, &[vector(0.9)]).await?;
+    // Erased ids fill the first window, so it admits two of twenty and widens.
+    for _ in 0..18 {
+        index
+            .put(entity(Uuid::now_v7()), owner, 1, &[vector(0.5)])
+            .await?;
+    }
+    *index.before_window.lock().unwrap() = Some(BeforeWindow {
+        window: 40,
+        change: Change::Supersede {
+            pg: Box::new(pg.clone()),
+            owner,
+            handle: superseded.handle,
+        },
+    });
+    let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let page = pg
+        .search_memories(
+            Some(&owner_scope_for_tests(&[owner])),
+            &request(owner),
+            registry.search_projections(),
+        )
+        .await?;
+    assert_eq!(*index.windows.lock().unwrap(), vec![20, 40]);
+    assert!(
+        index.before_window.lock().unwrap().is_none(),
+        "the series was superseded between the rounds"
+    );
+    assert_eq!(
+        page.results
+            .iter()
+            .map(|result| result.memory_id.into_inner())
+            .collect::<Vec<_>>(),
+        [kept]
+    );
+    assert!(!page.has_more);
+    Ok(())
+}
+
+/// A candidate an earlier widening round found stays a candidate when a later
+/// round's index answer leaves it out: the last round admits every candidate
+/// the rounds found, and the memory is still a head the reader may read.
+#[tokio::test]
+async fn an_eligible_candidate_a_later_round_leaves_out_stays_on_the_page() -> TestResult {
+    let index = Arc::new(RecordingIndex::default());
+    let (pg, _database) = fresh_pg_host_index("semantic_widening_union", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let entity = |id| EmbeddableEntityRef::Memory {
+        kind: proxiima_core::MemoryKind::Fact,
+        memory_id: MemoryId::new(id),
+    };
+    let left_out = seed_note(&pg, owner, "wanted").await?;
+    let later = seed_note(&pg, owner, "wanted").await?;
+    index
+        .put(entity(left_out), owner, 1, &[vector(1.0)])
+        .await?;
+    // Erased ids fill the first window after `left_out`, so it admits one of
+    // forty and widens; `later` ranks below them and enters at the second.
+    for _ in 0..39 {
+        index
+            .put(entity(Uuid::now_v7()), owner, 1, &[vector(0.8)])
+            .await?;
+    }
+    index.put(entity(later), owner, 1, &[vector(0.5)]).await?;
+    *index.before_window.lock().unwrap() = Some(BeforeWindow {
+        window: 80,
+        change: Change::Drop(key(left_out)),
+    });
+    let mut req = request(owner);
+    req.limit = 2;
+    let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let page = pg
+        .search_memories(
+            Some(&owner_scope_for_tests(&[owner])),
+            &req,
+            registry.search_projections(),
+        )
+        .await?;
+    assert_eq!(*index.windows.lock().unwrap(), vec![40, 80]);
+    assert!(
+        index.before_window.lock().unwrap().is_none(),
+        "the second round's answer left the first round's candidate out"
+    );
+    assert_eq!(
+        page.results
+            .iter()
+            .map(|result| result.memory_id.into_inner())
+            .collect::<Vec<_>>(),
+        [left_out, later]
+    );
+    assert!(!page.has_more);
+    Ok(())
+}
+
+/// A candidate two widening rounds find carries the later round's score: a
+/// vector the index replaced between the rounds is the one the page ranks by.
+#[tokio::test]
+async fn a_candidate_both_rounds_find_carries_the_later_score() -> TestResult {
+    let index = Arc::new(RecordingIndex::default());
+    let (pg, _database) = fresh_pg_host_index("semantic_widening_rescore", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let entity = |id| EmbeddableEntityRef::Memory {
+        kind: proxiima_core::MemoryKind::Fact,
+        memory_id: MemoryId::new(id),
+    };
+    let rescored = seed_note(&pg, owner, "wanted").await?;
+    index
+        .put(entity(rescored), owner, 1, &[vector(1.0)])
+        .await?;
+    // Erased ids fill the first window, so it admits one of twenty and widens.
+    for _ in 0..19 {
+        index
+            .put(entity(Uuid::now_v7()), owner, 1, &[vector(0.5)])
+            .await?;
+    }
+    *index.before_window.lock().unwrap() = Some(BeforeWindow {
+        window: 40,
+        change: Change::Reembed {
+            entity: entity(rescored),
+            owner,
+            vector: vector(0.4),
+        },
+    });
+    let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+    let page = pg
+        .search_memories(
+            Some(&owner_scope_for_tests(&[owner])),
+            &request(owner),
+            registry.search_projections(),
+        )
+        .await?;
+    assert_eq!(*index.windows.lock().unwrap(), vec![20, 40]);
+    assert!(
+        index.before_window.lock().unwrap().is_none(),
+        "the index replaced the vector between the rounds"
+    );
+    assert_eq!(page.results.len(), 1);
+    assert_eq!(page.results[0].memory_id.into_inner(), rescored);
+    assert!(
+        (page.results[0].score - 0.4).abs() < 0.000_001,
+        "the later round's score, not the first round's 1.0; got {}",
+        page.results[0].score
+    );
     Ok(())
 }
 
