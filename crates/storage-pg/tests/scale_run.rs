@@ -25,10 +25,10 @@
 //! retrieval quality looks on real text. The JSON line says so.
 //!
 //! Each query is one production `search_memories` call, so the candidate
-//! window is the one the search asks for. The candidate function answers from
-//! an exact owner scan when the index scan returns too few rows; the test
-//! cannot see that from outside. A cell with recall 1.0 and a latency far
-//! above its neighbors is that scan.
+//! window is the one the search asks for. The candidate function scores the
+//! owner's chunks exactly when they fit its exact-scan budget, and falls back
+//! to that scan when the index walk returns fewer memories than the window.
+//! The harness does not record which path the candidate function selected.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use std::collections::BTreeSet;
@@ -490,9 +490,16 @@ async fn filtered_vector_search_recall_and_latency_by_owner_share() -> TestResul
         let memories = seed_facts(&admin, *owner, *rows, Shape::Note).await?;
         seed_embeddings(&admin, *owner, &memories, &mut rng, &centers).await?;
     }
-    sqlx::query("ANALYZE proxiima_core.embeddings")
-        .execute(&admin)
-        .await?;
+    // Bulk seeding leaves visibility-map bits unset. Vacuuming before timing
+    // sets all-visible bits on eligible pages so index-only scans on the
+    // chunk-budget count can skip heap fetches; PostgreSQL still chooses the
+    // plan.
+    sqlx::raw_sql(
+        "VACUUM ANALYZE proxiima_core.embeddings, proxiima_core.embedding_heads,
+                        proxiima_core.memory, proxiima_core.memory_head",
+    )
+    .execute(&admin)
+    .await?;
     let seeding_secs = seeding.elapsed().as_secs_f64();
 
     let mut query_rng = Rng::new(QUERY_SEED);
