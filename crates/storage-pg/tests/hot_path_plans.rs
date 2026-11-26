@@ -1,7 +1,8 @@
 //! EXPLAIN plan-shape guards for the hot reads.
 //!
 //! Capability check: `enable_seqscan = off` so a tiny template DB still
-//! has to pick the shipped index. Not a cost/latency bench.
+//! has to pick the shipped index. Not a latency bench: an estimated cost is
+//! bounded only where it decides JIT compilation.
 #![allow(clippy::doc_markdown, clippy::too_many_lines)]
 
 use proxiima_core::EmbeddingDim;
@@ -1278,13 +1279,153 @@ async fn retention_prune_reads_the_published_index() {
     result.expect("retention prune EXPLAIN failed");
 }
 
-/// The stale-claim reclaim reads the jobs in flight, not the queue (#491).
+/// Owners whose pending jobs interleave in the embedding queue, and how many
+/// each queued: the multi-owner backlog the drain polls.
+const QUEUE_OWNERS: usize = 100;
+const QUEUE_JOBS_PER_OWNER: usize = 100;
+/// The space every queued job is in.
+const QUEUE_MODEL: &str = "queue-model";
+const QUEUE_DIM: i16 = 1024;
+/// The jobs one claim takes.
+const CLAIM_LIMIT: usize = 32;
+/// The estimated cost a drain statement stays under, with room below
+/// `jit_above_cost`'s default of 100,000: above it, every poll compiles its
+/// plan. The owner policies' subqueries once put this queue's stale-claim
+/// reclaim over 600,000.
+const DRAIN_COST: f64 = 50_000.0;
+
+/// `QUEUE_OWNERS` owners with `QUEUE_JOBS_PER_OWNER` pending jobs each, every
+/// job's memory a live Fact, queued round-robin across the owners. Returns
+/// the owners and each job with its owner, in queue order.
+async fn seed_embedding_queue(
+    pool: &sqlx::PgPool,
+) -> Result<(Vec<Uuid>, Vec<(Uuid, Uuid)>), Box<dyn std::error::Error>> {
+    let owners: Vec<Uuid> = (0..QUEUE_OWNERS).map(|_| Uuid::now_v7()).collect();
+    let job_owners: Vec<Uuid> = (0..QUEUE_OWNERS * QUEUE_JOBS_PER_OWNER)
+        .map(|n| owners[n % QUEUE_OWNERS])
+        .collect();
+    let entities: Vec<Uuid> = job_owners.iter().map(|_| Uuid::now_v7()).collect();
+    let job_ids: Vec<Uuid> = job_owners.iter().map(|_| Uuid::now_v7()).collect();
+    let mut tx = pool.begin().await?;
+    // One coarse lock instead of one advisory lock per memory.
+    sqlx::query("LOCK TABLE proxiima_core.memory, proxiima_core.goal IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await?;
+    // Raw INSERTs on purpose: bulk volume for a plan-shape test. One
+    // statement per table, because `memory_align_head` reads the head back.
+    sqlx::query(
+        "INSERT INTO proxiima_core.owners (owner_id, kind)
+         SELECT owner_id, 'personal' FROM unnest($1::uuid[]) owner_id",
+    )
+    .bind(&owners)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
+         SELECT t, 'fact', 'queue/plan-v1', owner_id, t
+           FROM unnest($1::uuid[], $2::uuid[]) AS seeded(t, owner_id)",
+    )
+    .bind(&entities)
+    .bind(&job_owners)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory
+             (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
+         SELECT t, t, 'fact', owner_id, 'queue/plan-v1', '{}', uuid_extract_timestamp(t),
+                '00000000-0000-0000-0000-000000000509'::uuid, NULL
+           FROM unnest($1::uuid[], $2::uuid[]) AS seeded(t, owner_id)",
+    )
+    .bind(&entities)
+    .bind(&job_owners)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.embedding_jobs (job_id, entity_id, model_id, dim, owner_id)
+         SELECT job_id, t, $4, $5, owner_id
+           FROM unnest($1::uuid[], $2::uuid[], $3::uuid[]) AS seeded(job_id, t, owner_id)",
+    )
+    .bind(&job_ids)
+    .bind(&entities)
+    .bind(&job_owners)
+    .bind(QUEUE_MODEL)
+    .bind(QUEUE_DIM)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    sqlx::raw_sql(
+        "ANALYZE proxiima_core.embedding_jobs, proxiima_core.memory, proxiima_core.owners",
+    )
+    .execute(pool)
+    .await?;
+    let mut queue: Vec<(Uuid, Uuid)> = job_ids.into_iter().zip(job_owners).collect();
+    queue.sort_unstable();
+    Ok((owners, queue))
+}
+
+/// Whether a plan node runs as a SubPlan or InitPlan of its parent, other than
+/// a WITH query.
+fn is_subquery(node: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let text = |key: &str| node.get(key).and_then(serde_json::Value::as_str);
+    matches!(text("Parent Relationship"), Some("SubPlan" | "InitPlan"))
+        && !text("Subplan Name").is_some_and(|name| name.starts_with("CTE "))
+}
+
+/// How many subqueries a plan runs.
+fn subplans(plan: &serde_json::Value) -> usize {
+    match plan {
+        serde_json::Value::Array(items) => items.iter().map(subplans).sum(),
+        serde_json::Value::Object(node) => {
+            usize::from(is_subquery(node)) + node.values().map(subplans).sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+/// The tables a plan reads inside its subqueries.
+fn subquery_relations(plan: &serde_json::Value) -> Vec<String> {
+    let mut relations = Vec::new();
+    let mut walk = vec![(plan, false)];
+    while let Some((value, inside)) = walk.pop() {
+        match value {
+            serde_json::Value::Array(items) => {
+                walk.extend(items.iter().map(|item| (item, inside)));
+            }
+            serde_json::Value::Object(node) => {
+                let inside = inside || is_subquery(node);
+                if let Some(relation) = node
+                    .get("Relation Name")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|_| inside)
+                {
+                    relations.push(relation.to_owned());
+                }
+                walk.extend(node.values().map(|value| (value, inside)));
+            }
+            _ => {}
+        }
+    }
+    relations
+}
+
+/// The estimated total cost of an `EXPLAIN (FORMAT JSON)` plan.
+fn total_cost(plan: &serde_json::Value) -> f64 {
+    plan[0]["Plan"]["Total Cost"].as_f64().unwrap_or(f64::MAX)
+}
+
+/// The embedding drain's platform statements plan on their partial indexes
+/// with the owner policies as plain quals (#695).
 ///
-/// A queue of 60,000 jobs, a few hundred of them `processing`: the reclaim
-/// statement reaches those through `embedding_jobs_processing_idx` with
-/// `enable_seqscan` left on.
+/// Under the NOSUPERUSER NOBYPASSRLS platform role that owns the queue, so
+/// FORCE ROW LEVEL SECURITY applies, over 10,000 pending jobs of 100 owners
+/// with `enable_seqscan` left on: a claim, with no exclusions, with 50 Owners
+/// skipped and with 50 Owner spaces blocked, walks
+/// `embedding_jobs_pending_claim_idx` and takes the expected jobs in queue
+/// order; the stale-claim reclaim reads `embedding_jobs_processing_idx`
+/// whether no job or some are `processing`; neither, nor a debt drain, plans a
+/// policy subquery of the queue, and each stays below the JIT cost.
 #[tokio::test]
-async fn the_stale_claim_reclaim_reads_the_processing_index() {
+async fn the_embedding_drain_plans_on_its_indexes_without_policy_subqueries() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
     if let Err(e) = create_core_db(&db_name).await {
         panic!("PG required for tests but admin connect failed: {e}");
@@ -1293,48 +1434,138 @@ async fn the_stale_claim_reclaim_reads_the_processing_index() {
     let result: Result<(), Box<dyn std::error::Error>> = async {
         let pg = PgStorage::connect_for_tests(url.clone()).await?;
         let pool = pg.pool_for_tests();
-        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
-        create_user(pool, owner.as_user()).await?;
-        // Raw INSERT on purpose: bulk volume for a query-plan test, tens of thousands of rows in one statement.
-        sqlx::query(
-            "INSERT INTO proxiima_core.embedding_jobs
-                 (entity_id, model_id, owner_id, status, claimed_at, claim_token, dim)
-             SELECT uuidv7(), 'model', $1,
-                    CASE WHEN n % 200 = 0 THEN 'processing' ELSE 'pending' END
-                        ::proxiima_core.embedding_job_status,
-                    CASE WHEN n % 200 = 0 THEN now() - interval '1 hour' END,
-                    CASE WHEN n % 200 = 0 THEN uuidv7() END,
-                    384
-               FROM generate_series(1, 60000) AS n",
-        )
-        .bind(owner.into_inner())
-        .execute(pool)
-        .await?;
-        sqlx::raw_sql("ANALYZE proxiima_core.embedding_jobs")
-            .execute(pool)
-            .await?;
+        let platform = pg.platform_scope_for_host();
+        let (owners, queue) = seed_embedding_queue(pool).await?;
 
-        let mut tx = pg.platform_scope_for_host().begin().await?;
-        let explain = explain_json(reclaim_stale_embedding_jobs_sql_for_tests());
-        let plan: serde_json::Value = sqlx::query_scalar(explain)
-            .bind(900_i64)
-            .fetch_one(&mut *tx)
-            .await?;
-        let rendered = plan.to_string();
-        assert!(
-            rendered.contains("embedding_jobs_processing_idx"),
-            "the reclaim must read the processing index; plan:\n{rendered}"
-        );
-        assert!(
-            !seq_scans(&plan, "embedding_jobs"),
-            "the reclaim must not scan the queue; plan:\n{rendered}"
+        let mut tx = platform.begin().await?;
+        let row_security_applies: bool = sqlx::query_scalar(
+            "SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND c.relforcerowsecurity
+               FROM pg_roles r, pg_class c
+              WHERE r.rolname = current_user
+                AND c.oid = 'proxiima_core.embedding_jobs'::regclass",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        assert!(row_security_applies, "the drain's plans must carry the policies");
+        tx.rollback().await?;
+
+        let (skipped, blocked) = owners.split_at(QUEUE_OWNERS / 2);
+        for (label, skip, block) in [
+            ("no exclusions", &[][..], &[][..]),
+            ("50 skipped owners", skipped, &[][..]),
+            ("50 blocked spaces", &[][..], blocked),
+        ] {
+            let expected: Vec<Uuid> = queue
+                .iter()
+                .filter(|(_, owner)| !skip.contains(owner) && !block.contains(owner))
+                .take(CLAIM_LIMIT)
+                .map(|(job, _)| *job)
+                .collect();
+            let models = vec![QUEUE_MODEL; block.len()];
+            let dims = vec![QUEUE_DIM; block.len()];
+            let limit = i64::try_from(CLAIM_LIMIT)?;
+            let mut tx = platform.begin().await?;
+            let mut explain = SqlText::new("EXPLAIN (FORMAT JSON) ");
+            explain.push_text(&SqlText::from(claim_embedding_jobs_sql_for_tests()));
+            let plan: serde_json::Value = sqlx::query_scalar(explain)
+                .bind(limit)
+                .bind(skip)
+                .bind(block)
+                .bind(&models)
+                .bind(&dims)
+                .fetch_one(&mut *tx)
+                .await?;
+            let rendered = plan.to_string();
+            assert_plan_names(&plan, "embedding_jobs_pending_claim_idx");
+            assert!(
+                !seq_scans(&plan, "embedding_jobs"),
+                "{label}: the claim must not scan the queue; plan:\n{rendered}"
+            );
+            assert_eq!(
+                subquery_relations(&plan),
+                Vec::<String>::new(),
+                "{label}: the claim plans no subquery that reads a table; plan:\n{rendered}"
+            );
+            assert!(
+                total_cost(&plan) < DRAIN_COST,
+                "{label}: the claim costs {}; plan:\n{rendered}",
+                total_cost(&plan)
+            );
+            let claimed: Vec<Uuid> = sqlx::query_scalar(claim_embedding_jobs_sql_for_tests())
+                .bind(limit)
+                .bind(skip)
+                .bind(block)
+                .bind(&models)
+                .bind(&dims)
+                .fetch_all(&mut *tx)
+                .await?;
+            assert_eq!(claimed, expected, "{label}: the claim takes the queue's head");
+            tx.rollback().await?;
+        }
+
+        for processing in [false, true] {
+            if processing {
+                // A crashed drainer's claims: every 50th job, an hour old.
+                sqlx::query(
+                    "UPDATE proxiima_core.embedding_jobs
+                        SET status = 'processing', claimed_at = now() - interval '1 hour',
+                            claim_token = uuidv7()
+                      WHERE job_id = ANY($1::uuid[])",
+                )
+                .bind(queue.iter().step_by(50).map(|(job, _)| *job).collect::<Vec<_>>())
+                .execute(pool)
+                .await?;
+                sqlx::raw_sql("ANALYZE proxiima_core.embedding_jobs")
+                    .execute(pool)
+                    .await?;
+            }
+            let mut tx = platform.begin().await?;
+            let mut explain = SqlText::new("EXPLAIN (FORMAT JSON) ");
+            explain.push_text(&SqlText::from(reclaim_stale_embedding_jobs_sql_for_tests()));
+            let plan: serde_json::Value = sqlx::query_scalar(explain)
+                .bind(900_i64)
+                .fetch_one(&mut *tx)
+                .await?;
+            let rendered = plan.to_string();
+            assert!(
+                gin_index_cond(&plan, "embedding_jobs_processing_idx")
+                    .is_some_and(|cond| cond.contains("claimed_at")),
+                "processing {processing}: the reclaim must search the processing index by claim age; plan:\n{rendered}"
+            );
+            assert!(
+                !seq_scans(&plan, "embedding_jobs"),
+                "processing {processing}: the reclaim must not scan the queue; plan:\n{rendered}"
+            );
+            assert_eq!(
+                subplans(&plan),
+                0,
+                "processing {processing}: the reclaim plans no policy subquery; plan:\n{rendered}"
+            );
+            assert!(
+                total_cost(&plan) < DRAIN_COST,
+                "processing {processing}: the reclaim costs {}; plan:\n{rendered}",
+                total_cost(&plan)
+            );
+            tx.rollback().await?;
+        }
+
+        let mut tx = platform.begin().await?;
+        let plan: serde_json::Value = sqlx::query_scalar(
+            "EXPLAIN (FORMAT JSON) DELETE FROM proxiima_core.vector_index_debt",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        assert_eq!(
+            subplans(&plan),
+            0,
+            "a debt drain plans no policy subquery; plan:\n{plan}"
         );
         tx.rollback().await?;
         Ok(())
     }
     .await;
     let _ = drop_db(&db_name).await;
-    result.expect("stale-claim reclaim EXPLAIN failed");
+    result.expect("embedding drain EXPLAIN failed");
 }
 
 /// A write's capacity check reads one row however long the backlog is (#491).

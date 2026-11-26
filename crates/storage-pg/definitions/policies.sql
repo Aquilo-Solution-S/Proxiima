@@ -47,6 +47,16 @@ BEGIN
                         caller, target_schema, target_table
                         USING ERRCODE = 'PX002';
                 END IF;
+                -- The queue's predicates, Goal route included, are one call each.
+                IF target_table IN ('embedding_jobs', 'vector_index_debt') THEN
+                    read_expr := format('proxiima_core.owner_rls_queue_entity_readable(%I.%I.%I, %I.%I.%I)',
+                        target_schema, target_table, owner_column, target_schema, target_table, memory_key);
+                    write_expr := format('proxiima_core.owner_rls_queue_entity_writable(%I.%I.%I, %I.%I.%I)',
+                        target_schema, target_table, owner_column, target_schema, target_table, memory_key);
+                    select_expr := format('(%s) OR (%s)', read_expr, write_expr);
+                    RETURN NEXT;
+                    RETURN;
+                END IF;
                 FOREACH direction IN ARRAY ARRAY['read', 'write'] LOOP
                     fact_owners := format('(SELECT COALESCE(NULLIF(current_setting(%L, true), %L)::uuid[], %L::uuid[]))::uuid[]',
                         CASE direction WHEN 'read' THEN 'app.owner' ELSE 'app.write_owner' END, '', '{}');

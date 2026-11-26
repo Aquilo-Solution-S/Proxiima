@@ -302,7 +302,7 @@ struct CoreTable {
     insert: &'static str,
 }
 
-const CORE_TABLES: [CoreTable; 4] = [
+const CORE_TABLES: [CoreTable; 5] = [
     CoreTable {
         table: "projection",
         key: "memory_id",
@@ -323,6 +323,11 @@ const CORE_TABLES: [CoreTable; 4] = [
         table: "embedding_jobs",
         key: "entity_id",
         insert: "INSERT INTO proxiima_core.embedding_jobs(entity_id,owner_id,model_id,dim) VALUES ($1,$2,$3,384)",
+    },
+    CoreTable {
+        table: "vector_index_debt",
+        key: "entity_id",
+        insert: "INSERT INTO proxiima_core.vector_index_debt(entity_id,owner_id,model_id,dim,op) VALUES ($1,$2,$3,384,'delete')",
     },
 ];
 

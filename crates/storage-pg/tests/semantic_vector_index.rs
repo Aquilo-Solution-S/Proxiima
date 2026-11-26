@@ -15,11 +15,11 @@ use proxiima_core::{
     AccessCeiling, EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, GoalAccess, MemoryId,
     OwnerId, Role, SchemaId, SpaceVector, StorageError, UserId,
 };
-use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::test_fixtures::{
     TestDerived, TestGoal, TestNote, create_embedding_of, create_user, enqueue_embedding_job,
     fresh_pg_host_index, insert_goal_grant,
 };
+use proxiima_storage_pg::{PgStorage, begin_owner_transaction};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -543,6 +543,39 @@ async fn fact_role_source_owner_does_not_starve_goal_published_perspective() -> 
     );
     assert_eq!(page.results[0].memory_id.into_inner(), published);
     assert!(!private.contains(&page.results[0].memory_id.into_inner()));
+    Ok(())
+}
+
+/// A Goal audience reads the embedding job of the memory published to it and
+/// no other job of the source owner: the queue's read policy carries the
+/// route `goal_memory_read_admitted` answers.
+#[tokio::test]
+async fn a_goal_audience_reads_the_published_memorys_embedding_job_only() -> TestResult {
+    let index = Arc::new(InMemoryVectorIndex::default());
+    let (pg, _database) = fresh_pg_host_index("queue_goal_publication", index).await;
+    let source_owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let guest = UserId::new(Uuid::now_v7());
+    let published = seed_note(&pg, source_owner, "wanted").await?;
+    let private = seed_note(&pg, source_owner, "wanted").await?;
+    for memory in [published, private] {
+        enqueue_embedding_job(&pg, source_owner, memory, "queue-goal").await?;
+    }
+    publish_semantic_fixture(&pg, source_owner, guest, published, AccessCeiling::Fact).await?;
+
+    let scope = proxiima_core::test_fixtures::authenticated_context(
+        proxiima_core::AuthzContext::for_subject(guest, proxiima_core::AuthPath::HostBearer),
+    )
+    .owner_scope()
+    .expect("direct guest scope")
+    .clone();
+    let mut tx = begin_owner_transaction(&pg.clone_pool_for_backend(), &scope).await?;
+    let readable: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT entity_id FROM proxiima_core.embedding_jobs WHERE model_id = 'queue-goal'",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.rollback().await?;
+    assert_eq!(readable, [published]);
     Ok(())
 }
 
