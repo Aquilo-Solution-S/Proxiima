@@ -1372,6 +1372,9 @@ fn candidate_tags(column: &SqlText) -> SqlText {
 
 /// The candidate statements' authorization of `memory_id`; `head_filter` is
 /// an extra predicate on `authorized_head`, or empty.
+///
+/// A head has its versions' owner (`Proxiima.Identity.seriesContract`), so
+/// the physical head is looked up among its memory's owner's heads alone.
 fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> SqlText {
     let mut sql = SqlText::new(
         " AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory \
@@ -1384,8 +1387,9 @@ fn candidate_authorization(memory_id: &'static str, head_filter: &SqlText) -> Sq
               OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) \
          AND ($11::text IS NULL OR authorized_memory.kind::text = $11) \
          AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head \
-         WHERE authorized_head.handle = authorized_memory.handle \
-         AND authorized_head.t = authorized_memory.t")
+         WHERE authorized_head.owner_id = authorized_memory.owner_id \
+         AND authorized_head.t = authorized_memory.t \
+         AND authorized_head.handle = authorized_memory.handle")
     .push_text(head_filter)
     .push(")))");
     sql
@@ -2057,8 +2061,8 @@ pub fn substring_sql_for_tests(
 }
 
 /// The substring candidate statement the migrated `search_substring_candidates`
-/// function runs, for the plan pins. It binds the function's twelve
-/// parameters in order.
+/// function runs, for the plan pins. It binds the function's parameters in
+/// order, all but `recency`, which picks the ordering.
 ///
 /// # Errors
 ///
@@ -2071,6 +2075,23 @@ pub fn substring_candidate_sql_for_tests(
 ) -> Result<SqlText, StorageError> {
     projection_candidate_statements(projections, true, recency)?
         .ok_or_else(|| StorageError::Internal("no substring leg in the projections".into()))
+}
+
+/// The ranked candidate statement the migrated `search_lexical_candidates`
+/// function runs, for the plan pins. It binds the function's parameters in
+/// order, all but `recency`, which picks the ordering.
+///
+/// # Errors
+///
+/// Propagates the builder's; refuses projections that declare no ranked arm.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub fn ranked_candidate_sql_for_tests(
+    projections: &[MemorySearchProjection],
+    recency: bool,
+) -> Result<SqlText, StorageError> {
+    projection_candidate_statements(projections, false, recency)?
+        .ok_or_else(|| StorageError::Internal("no ranked arm in the projections".into()))
 }
 
 /// The store's RLS admission query for vector-port candidates.

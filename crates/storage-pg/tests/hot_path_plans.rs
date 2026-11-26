@@ -24,9 +24,10 @@ use proxiima_storage_pg::verbs::fact_embeddings::{
 };
 use proxiima_storage_pg::verbs::query::{
     ancestor_hop_sql_for_tests, descendant_hop_sql_for_tests, explain_owned_head_handle_for_tests,
-    inbound_pin_sql_for_tests, memory_page_sql_for_tests, ranked_projection_sql_for_tests,
-    search_admit_sql_for_tests, semantic_candidate_admission_sql_for_tests,
-    set_hnsw_search_sql_for_tests, substring_sql_for_tests,
+    inbound_pin_sql_for_tests, memory_page_sql_for_tests, ranked_candidate_sql_for_tests,
+    ranked_projection_sql_for_tests, search_admit_sql_for_tests,
+    semantic_candidate_admission_sql_for_tests, set_hnsw_search_sql_for_tests,
+    substring_candidate_sql_for_tests, substring_sql_for_tests,
 };
 use proxiima_storage_pg::verbs::{
     fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests,
@@ -628,6 +629,272 @@ async fn hot_path_plans_use_expected_indexes() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("hot-path EXPLAIN failed");
+}
+
+/// Owners beside the reader, and the notes each of them holds: a store in
+/// which the reader's heads are a small part of `memory_head`.
+const NEIGHBOURS: usize = 300;
+const NEIGHBOUR_NOTES: i32 = 100;
+/// The reader's notes, and how many of them have a 384-wide embedding: a
+/// part, as when only some memories are embedded in a space.
+const READER_NOTES: i32 = 3_000;
+const READER_EMBEDDED: i64 = 300;
+
+/// Seed `notes` notes, with their admissions and projection rows, for each
+/// owner, and embed `embeddings` of the `embedded` owner's notes.
+async fn seed_owners_corpus(
+    pool: &sqlx::PgPool,
+    owners: &[(Uuid, i32)],
+    embedded: Uuid,
+    embeddings: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (ids, notes): (Vec<Uuid>, Vec<i32>) = owners.iter().copied().unzip();
+    let mut tx = pool.begin().await?;
+    // A test server commits asynchronously, and VACUUM marks a page
+    // all-visible only once its rows' commit record is flushed.
+    sqlx::query("SET LOCAL synchronous_commit = on")
+        .execute(&mut *tx)
+        .await?;
+    // One coarse lock instead of one advisory lock per memory.
+    sqlx::query("LOCK TABLE proxiima_core.memory, proxiima_core.goal IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await?;
+    // Raw INSERTs on purpose: bulk volume for a plan-shape test. One
+    // statement per table, because `memory_align_head` reads the head back
+    // and a statement's CTEs share one snapshot (see `seed_projection_corpus`).
+    sqlx::query(
+        "INSERT INTO proxiima_core.owners (owner_id, kind)
+         SELECT owner_id, 'personal' FROM unnest($1::uuid[]) owner_id",
+    )
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory_head (handle, kind, schema_id, owner_id, t)
+         SELECT uuidv7(), 'fact', 'core/agent-note-v1', o.owner_id, uuidv7()
+           FROM unnest($1::uuid[], $2::int[]) AS o(owner_id, notes),
+                generate_series(1, o.notes)",
+    )
+    .bind(&ids)
+    .bind(&notes)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.memory
+             (handle, t, kind, owner_id, schema_id, sidecar_tables, occurred_at, \"by\", via)
+         SELECT h.handle, h.t, 'fact', h.owner_id, 'core/agent-note-v1',
+                ARRAY['proxiima_core.agent_note_v1'], uuid_extract_timestamp(h.t),
+                '00000000-0000-0000-0000-000000000509'::uuid, NULL
+           FROM proxiima_core.memory_head h
+          WHERE h.owner_id = ANY($1::uuid[])",
+    )
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "WITH ids AS MATERIALIZED (
+             SELECT m.t, m.owner_id, row_number() OVER (ORDER BY m.t) AS n
+               FROM proxiima_core.memory m
+              WHERE m.owner_id = ANY($1::uuid[])
+         ), notes AS (
+             INSERT INTO proxiima_core.agent_note_v1 (t, note_id, title, body, tags)
+             SELECT t, uuidv7(), 'needle ' || n, 'needle body ' || n, '{}' FROM ids
+             RETURNING t
+         )
+         INSERT INTO proxiima_core.projection (memory_id, schema_id, owner_id, search_tsv)
+         SELECT t, 'core/agent-note-v1', owner_id,
+                to_tsvector('english', 'needle title needle body ' || n)
+           FROM ids",
+    )
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.embedding_heads
+             (entity_id, model_id, embedding_version, owner_id, dim)
+         SELECT t, 'test-embed', 1, owner_id, 384
+           FROM proxiima_core.memory WHERE owner_id = $1
+          ORDER BY t LIMIT $2",
+    )
+    .bind(embedded)
+    .bind(embeddings)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.embeddings
+             (entity_id, model_id, embedding_version, owner_id, dim, chunk_ordinal, vec)
+         SELECT h.entity_id, h.model_id, 1, h.owner_id, h.dim, 0,
+                (SELECT array_agg(random()::real) FROM generate_series(1, 384)
+                  WHERE h.entity_id IS NOT NULL)::public.vector
+           FROM proxiima_core.embedding_heads h WHERE h.owner_id = $1",
+    )
+    .bind(embedded)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// How a plan reaches `memory_head`: each scan's node type, the condition
+/// its index is searched with, and its filter.
+fn head_scans(plan: &serde_json::Value) -> Vec<(String, String, String)> {
+    match plan {
+        serde_json::Value::Array(items) => items.iter().flat_map(head_scans).collect(),
+        serde_json::Value::Object(node) => {
+            let text = |key: &str| {
+                node.get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let mut scans: Vec<(String, String, String)> =
+                node.values().flat_map(head_scans).collect();
+            if text("Relation Name") == "memory_head" {
+                let cond = [text("Index Cond"), text("Recheck Cond")].join(" ");
+                scans.push((text("Node Type"), cond, text("Filter")));
+            }
+            scans
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The search candidate statements check a candidate's physical head among
+/// its own owner's heads, by index (#693), in a store of many owners with the
+/// planner's default costs.
+///
+/// A head shares its memory's owner, so the lookup names the owner, and
+/// `(owner_id, t)` answers it from the owner's part of the index. A lookup by
+/// `handle` alone is a heap probe per candidate into the whole table's heads.
+/// The statements run as the candidate functions run them: as
+/// `proxiima_search`, under the reader's owner scope.
+#[tokio::test]
+async fn candidate_head_checks_read_the_owners_heads() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let reader = Uuid::now_v7();
+        let mut owners = vec![(reader, READER_NOTES)];
+        owners.extend((0..NEIGHBOURS).map(|_| (Uuid::now_v7(), NEIGHBOUR_NOTES)));
+        seed_owners_corpus(pool, &owners, reader, READER_EMBEDDED).await?;
+        sqlx::raw_sql(
+            "VACUUM (ANALYZE) proxiima_core.memory_head, proxiima_core.memory,
+                 proxiima_core.projection, proxiima_core.agent_note_v1,
+                 proxiima_core.embeddings, proxiima_core.embedding_heads",
+        )
+        .execute(pool)
+        .await?;
+
+        let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+        let projections = registry.search_projections();
+        let schema_ids: Vec<&str> = projections
+            .iter()
+            .map(|projection| projection.schema_id.as_str())
+            .collect();
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET LOCAL ROLE proxiima_search")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "SELECT set_config('app.proxiima_scope', 'owner', true),
+                    set_config('app.owner', $1, true),
+                    set_config('app.read_abstraction', $1, true),
+                    set_config('app.read_perspective', $1, true),
+                    set_config('app.read_goal', $1, true)",
+        )
+        .bind(format!("{{{reader}}}"))
+        .execute(&mut *tx)
+        .await?;
+
+        let mut plans = Vec::new();
+        for (label, statement) in [
+            (
+                "vector candidates",
+                proxiima_storage_pg::vector_index::candidate_scan_sql_for_tests(EmbeddingDim::D384),
+            ),
+            (
+                "exact vector scores",
+                proxiima_storage_pg::vector_index::best_chunk_scores_sql_for_tests(
+                    EmbeddingDim::D384,
+                ),
+            ),
+        ] {
+            let plan: serde_json::Value = sqlx::query_scalar(explain_json(statement))
+                .bind(vec![reader])
+                .bind("test-embed")
+                .bind(pgvector::Vector::from(unit_values(EmbeddingDim::D384)))
+                .bind(20_i64)
+                .bind(true)
+                .fetch_one(&mut *tx)
+                .await?;
+            plans.push((label, plan));
+        }
+        for (label, statement, query) in [
+            (
+                "lexical candidates",
+                ranked_candidate_sql_for_tests(projections, false)?,
+                "needle".to_owned(),
+            ),
+            (
+                "substring candidates",
+                substring_candidate_sql_for_tests(projections, false)?,
+                proxiima_core::verbs::query::like_pattern("needle 12"),
+            ),
+        ] {
+            let plan: serde_json::Value = sqlx::query_scalar(explain_json(statement))
+                .bind(query)
+                .bind(20_i64)
+                .bind(None::<Vec<String>>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<Uuid>)
+                .bind(vec![reader])
+                .bind(&schema_ids)
+                .bind(false)
+                .bind(true)
+                .bind(Some("fact"))
+                .bind(false)
+                .fetch_one(&mut *tx)
+                .await?;
+            plans.push((label, plan));
+        }
+        tx.rollback().await?;
+
+        for (label, plan) in plans {
+            let scans = head_scans(&plan);
+            assert!(
+                !scans.is_empty(),
+                "the {label} check the head of a heads-only request; plan:\n{plan}"
+            );
+            for (node, cond, filter) in scans {
+                // A probe per candidate is searched on the candidate's owner
+                // and version; owner row security already narrows every scan
+                // to the reader's owners, so an owner condition alone would
+                // still read all of them per candidate. A scan of the heads
+                // once, for a hashed check, is narrowed to the reader's owners.
+                let probe = format!("{cond} {filter}").contains("memory.");
+                let searched = if probe {
+                    cond.contains("owner_id = memory.owner_id") && cond.contains("t = memory.t")
+                } else {
+                    node != "Seq Scan" && cond.contains("owner_id")
+                };
+                assert!(
+                    searched,
+                    "the {label} must reach memory_head by an index searched on the \
+                     owner, not by `{node}` on `{cond}` filtering `{filter}`; plan:\n{plan}"
+                );
+            }
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("candidate head-check EXPLAIN failed");
 }
 
 /// The table's primary-key columns in index order, read the way the export

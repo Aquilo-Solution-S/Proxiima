@@ -48,7 +48,7 @@ pub(crate) use search::{
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use search::{
-    ranked_projection_sql_for_tests, search_admit_sql_for_tests,
+    ranked_candidate_sql_for_tests, ranked_projection_sql_for_tests, search_admit_sql_for_tests,
     semantic_candidate_admission_sql_for_tests, substring_candidate_sql_for_tests,
     substring_sql_for_tests,
 };

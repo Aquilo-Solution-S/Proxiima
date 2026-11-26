@@ -53,7 +53,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.vector(384) OPERATOR(public.<=>) $3::public.vector(384)
              LIMIT chunk_window
@@ -87,7 +88,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -119,7 +121,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
@@ -185,7 +188,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.vector(768) OPERATOR(public.<=>) $3::public.vector(768)
              LIMIT chunk_window
@@ -219,7 +223,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -251,7 +256,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
@@ -317,7 +323,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.vector(1024) OPERATOR(public.<=>) $3::public.vector(1024)
              LIMIT chunk_window
@@ -351,7 +358,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -383,7 +391,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
@@ -449,7 +458,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.vector(1536) OPERATOR(public.<=>) $3::public.vector(1536)
              LIMIT chunk_window
@@ -483,7 +493,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -515,7 +526,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
@@ -581,7 +593,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.halfvec(2048) OPERATOR(public.<=>) $3::public.halfvec(2048)
              LIMIT chunk_window
@@ -615,7 +628,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -647,7 +661,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
@@ -713,7 +728,8 @@ BEGIN
                     WHERE m.t = emb.entity_id
                       AND m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
                )
              ORDER BY emb.vec::public.halfvec(3072) OPERATOR(public.<=>) $3::public.halfvec(3072)
              LIMIT chunk_window
@@ -747,7 +763,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
          ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC
          LIMIT 1000
         )
@@ -779,7 +796,8 @@ BEGIN
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
          WHERE m.owner_id = ANY($1)
            AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score

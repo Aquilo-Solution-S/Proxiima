@@ -154,8 +154,8 @@ pub(crate) fn nearest_sql(lane: Lane) -> SqlText {
     let mut width = SqlText::new("");
     width.push_u64(u64::try_from(lane.width).unwrap_or_default());
     let scan = candidate_scan_sql(lane, "chunk_window");
-    let fallback = best_chunk_scores_sql(lane, false);
-    let rerank = best_chunk_scores_sql(lane, true);
+    let fallback = best_chunk_scores_sql(lane, false, "target");
+    let rerank = best_chunk_scores_sql(lane, true, "target");
     let mut sql = SqlText::new(
         "
 DECLARE
@@ -227,7 +227,16 @@ END;
     sql
 }
 
-fn best_chunk_scores_sql(lane: Lane, candidates_only: bool) -> SqlText {
+/// What `heads_only` (`$5`) admits of a candidate memory `m`: a head a Goal
+/// shows the caller, or the head of `m`'s own series. A head has its
+/// versions' owner (`Proxiima.Identity.seriesContract`), so it is looked up
+/// among `m.owner_id`'s heads alone.
+const HEADS_ONLY_FILTER: &str = "
+           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
+                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
+                            WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))";
+
+fn best_chunk_scores_sql(lane: Lane, candidates_only: bool, target: &'static str) -> SqlText {
     let candidate_filter = if candidates_only {
         "
                AND emb.entity_id = ANY(candidate_ids)"
@@ -249,10 +258,10 @@ fn best_chunk_scores_sql(lane: Lane, candidates_only: bool) -> SqlText {
                AND emb.model_id = $2
                AND ",
     );
-    sql
-    .push(lane.predicate)
-    .push(candidate_filter)
-    .push("
+    sql.push(lane.predicate)
+        .push(candidate_filter)
+        .push(
+            "
         ), eligible_chunks AS (
         SELECT emb.entity_id, emb.chunk_score
           FROM owned_embeddings emb
@@ -262,18 +271,22 @@ fn best_chunk_scores_sql(lane: Lane, candidates_only: bool) -> SqlText {
            AND head.dim = emb.dim
            AND head.embedding_version = emb.embedding_version
           JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
-         WHERE m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))")
-    .push_text(&chunk_limit)
-    .push("
+         WHERE m.owner_id = ANY($1)",
+        )
+        .push(HEADS_ONLY_FILTER)
+        .push_text(&chunk_limit)
+        .push(
+            "
         )
         SELECT emb.entity_id,
                LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
           FROM eligible_chunks emb
          GROUP BY emb.entity_id
          ORDER BY score DESC, emb.entity_id DESC
-         LIMIT target;");
+         LIMIT ",
+        )
+        .push(target)
+        .push(";");
     sql
 }
 
@@ -286,9 +299,9 @@ fn candidate_scan_sql(lane: Lane, limit: &'static str) -> SqlText {
               FROM proxiima_core.embeddings emb
              WHERE ",
     );
-    sql
-    .push(lane.predicate)
-    .push("
+    sql.push(lane.predicate)
+        .push(
+            "
                AND emb.owner_id = ANY($1)
                AND emb.model_id = $2
                AND EXISTS (
@@ -301,17 +314,22 @@ fn candidate_scan_sql(lane: Lane, limit: &'static str) -> SqlText {
                AND EXISTS (
                    SELECT 1 FROM proxiima_core.live_memory m
                     WHERE m.t = emb.entity_id
-                      AND m.owner_id = ANY($1)
-           AND (NOT $5::boolean OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())
-                OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh WHERE mh.handle=m.handle AND mh.t=m.t))
+                      AND m.owner_id = ANY($1)",
+        )
+        .push(HEADS_ONLY_FILTER)
+        .push(
+            "
                )
-             ORDER BY ")
-    .push_text(&vec)
-    .push(" OPERATOR(public.<=>) $3")
-    .push_text(&cast)
-    .push("
-             LIMIT ")
-    .push(limit);
+             ORDER BY ",
+        )
+        .push_text(&vec)
+        .push(" OPERATOR(public.<=>) $3")
+        .push_text(&cast)
+        .push(
+            "
+             LIMIT ",
+        )
+        .push(limit);
     sql
 }
 
@@ -321,6 +339,15 @@ fn candidate_scan_sql(lane: Lane, limit: &'static str) -> SqlText {
 #[must_use]
 pub fn candidate_scan_sql_for_tests(dim: EmbeddingDim) -> SqlText {
     candidate_scan_sql(Lane::of(dim), "$4")
+}
+
+/// The production exact owner scan, run when the candidate scan underfills,
+/// with its target as bind four.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+#[must_use]
+pub fn best_chunk_scores_sql_for_tests(dim: EmbeddingDim) -> SqlText {
+    best_chunk_scores_sql(Lane::of(dim), false, "$4")
 }
 
 mod debt;
