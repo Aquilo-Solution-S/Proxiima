@@ -7,6 +7,7 @@
 
 use proxiima_core::EmbeddingDim;
 use proxiima_core::storage_ports::PinTargetKind;
+use proxiima_core::test_fixtures::owner_scope_for_tests;
 use proxiima_core::verbs::query::SidecarAtom;
 use proxiima_core::verbs::query::{
     EntityKind, MemorySearchRequest, QueryRequest, SearchMode, SearchOrder, SupersessionStatus,
@@ -15,7 +16,6 @@ use proxiima_core::verbs::query::{
 use proxiima_core::verbs::schema::MemorySearchProjection;
 use proxiima_core::{EdgeEndpoint, EdgeKind, MemoryKind, OwnerId, SchemaId, SqlText, UserId};
 use proxiima_pg_testkit::{db_url, drop_db};
-use proxiima_storage_pg::PgStorage;
 use proxiima_storage_pg::export_statement_sql_for_tests;
 use proxiima_storage_pg::test_fixtures::{
     TestMemory, TestNote, create_core_db, create_embedding, create_user, enqueue_embedding_job,
@@ -33,6 +33,7 @@ use proxiima_storage_pg::verbs::query::{
 use proxiima_storage_pg::verbs::{
     fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests,
 };
+use proxiima_storage_pg::{PgStorage, begin_owner_transaction};
 use uuid::Uuid;
 
 /// `EXPLAIN` of a production statement, as JSON without costs.
@@ -676,6 +677,8 @@ const NEIGHBOUR_NOTES: i32 = 100;
 /// part, as when only some memories are embedded in a space.
 const READER_NOTES: i32 = 3_000;
 const READER_EMBEDDED: i64 = 300;
+/// The reader's notes one search admission checks at once.
+const ADMIT_BATCH: i64 = 256;
 
 /// Seed `notes` notes, with their admissions and projection rows, for each
 /// owner, and embed `embeddings` of the `embedded` owner's notes.
@@ -796,15 +799,16 @@ fn head_scans(plan: &serde_json::Value) -> Vec<(String, String, String)> {
     }
 }
 
-/// The search candidate statements check a candidate's physical head among
-/// its own owner's heads, by index (#693), in a store of many owners with the
-/// planner's default costs.
+/// The search candidate statements and search admission check a candidate's
+/// physical head among its own owner's heads, by index (#693, #704), in a
+/// store of many owners with the planner's default costs.
 ///
 /// A head shares its memory's owner, so the lookup names the owner, and
 /// `(owner_id, t)` answers it from the owner's part of the index. A lookup by
 /// `handle` alone is a heap probe per candidate into the whole table's heads.
-/// The statements run as the candidate functions run them: as
-/// `proxiima_search`, under the reader's owner scope.
+/// The candidate statements run as the candidate functions run them: as
+/// `proxiima_search`, under the reader's owner scope; admission runs on the
+/// runtime role under that scope.
 #[tokio::test]
 async fn candidate_head_checks_read_the_owners_heads() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
@@ -926,6 +930,40 @@ async fn candidate_head_checks_read_the_owners_heads() {
             plans.push((label, plan));
         }
         tx.rollback().await?;
+
+        // Admission runs on the runtime role under the reader's owner scope,
+        // over a batch of a few hundred hits.
+        let batch: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT t FROM proxiima_core.memory WHERE owner_id = $1 ORDER BY t LIMIT $2",
+        )
+        .bind(reader)
+        .bind(ADMIT_BATCH)
+        .fetch_all(pool)
+        .await?;
+        let runtime = pg.clone_pool_for_backend();
+        let mut tx = begin_owner_transaction(
+            &runtime,
+            &owner_scope_for_tests(&[OwnerId::from(UserId::new(reader))]),
+        )
+        .await?;
+        let mut admit = SqlText::new("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ");
+        admit.push_text(&search_admit_sql_for_tests(true));
+        let plan: serde_json::Value = sqlx::query_scalar(admit)
+            .bind(&batch)
+            .bind(vec![reader])
+            .bind(None::<String>)
+            .bind(None::<String>)
+            .bind(None::<time::OffsetDateTime>)
+            .bind(None::<time::OffsetDateTime>)
+            .fetch_one(&mut *tx)
+            .await?;
+        tx.rollback().await?;
+        assert_eq!(
+            plan[0]["Plan"]["Actual Rows"].as_f64(),
+            Some(f64::from(u32::try_from(batch.len())?)),
+            "admission admits every head of the batch; plan:\n{plan}"
+        );
+        plans.push(("search admission", plan));
 
         for (label, plan) in plans {
             let scans = head_scans(&plan);

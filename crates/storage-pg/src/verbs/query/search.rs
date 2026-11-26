@@ -24,7 +24,9 @@
 //!    apply every filter this step applies — supersession and kind — because
 //!    a window spent on rows this step will drop is a window that returns
 //!    fewer results than the corpus contains, at a wrong band or not at
-//!    all. See [`admit_side_restriction`].
+//!    all. See [`admit_side_restriction`]. A semantic search skips this
+//!    step: its one leg's last round already admitted every hit with this
+//!    statement narrowed further, so the page takes those rows.
 //! 4. **snippets** — one primary-key lookup per distinct sidecar present in
 //!    the PAGE, after admission and paging have run. The text lives in
 //!    exactly one place and is fetched for at most `limit` rows
@@ -159,14 +161,18 @@ pub(crate) async fn search_memories_on_connection(
         rows: BTreeMap::new(),
         bound: CandidateBound::Complete,
     };
-    match req.mode {
-        SearchMode::Lexical => merge_hits(
-            &mut hits,
-            scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true).await?,
-        ),
-        SearchMode::Semantic => merge_hits(
-            &mut hits,
-            scan_embeddings_on_connection(
+    // Every result of a page is admitted by one statement, so under
+    // READ COMMITTED a page reads its memories at one snapshot.
+    let mut admitted = match req.mode {
+        SearchMode::Lexical => {
+            merge_hits(
+                &mut hits,
+                scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true).await?,
+            );
+            admit_hits_on_connection(connection.as_mut(), req, &hits.rows).await?
+        }
+        SearchMode::Semantic => {
+            let semantic = scan_embeddings_on_connection(
                 connection,
                 req,
                 &spiices,
@@ -174,37 +180,34 @@ pub(crate) async fn search_memories_on_connection(
                 candidate_overfetch(req, limit, SEMANTIC_SCAN_CAP),
                 vectors,
             )
-            .await?,
-        ),
-        SearchMode::Hybrid => {
-            if req.semantic.is_some() {
-                merge_hits(
-                    &mut hits,
-                    scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true)
-                        .await?,
-                );
-                merge_hits(
-                    &mut hits,
-                    scan_embeddings_on_connection(
-                        connection,
-                        req,
-                        &spiices,
-                        tuning,
-                        candidate_overfetch(req, limit, SEMANTIC_SCAN_CAP),
-                        vectors,
-                    )
-                    .await?,
-                );
-            } else {
-                merge_hits(
-                    &mut hits,
-                    scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true)
-                        .await?,
-                );
-            }
+            .await?;
+            merge_hits(&mut hits, semantic.batch);
+            semantic
+                .admitted
+                .into_values()
+                .filter_map(|row| admit_row_to_result(req, &hits.rows, row))
+                .collect()
         }
-    }
-    let mut admitted = admit_hits_on_connection(connection.as_mut(), req, &hits.rows).await?;
+        SearchMode::Hybrid => {
+            merge_hits(
+                &mut hits,
+                scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true).await?,
+            );
+            if req.semantic.is_some() {
+                let semantic = scan_embeddings_on_connection(
+                    connection,
+                    req,
+                    &spiices,
+                    tuning,
+                    candidate_overfetch(req, limit, SEMANTIC_SCAN_CAP),
+                    vectors,
+                )
+                .await?;
+                merge_hits(&mut hits, semantic.batch);
+            }
+            admit_hits_on_connection(connection.as_mut(), req, &hits.rows).await?
+        }
+    };
     if uses_hybrid_fusion(req) {
         hits.bound = hits
             .bound
@@ -573,6 +576,24 @@ impl HitBatch {
 struct SearchHits {
     rows: BTreeMap<uuid::Uuid, Hit>,
     bound: CandidateBound,
+}
+
+/// The semantic leg's hits and the admission row of each, both from its last
+/// round's one admission statement: admission's statement narrowed further.
+/// A semantic search pages these rows; a hybrid search admits both legs' hits
+/// again in one statement.
+struct SemanticHits {
+    batch: HitBatch,
+    admitted: BTreeMap<uuid::Uuid, AdmitRow>,
+}
+
+impl SemanticHits {
+    fn empty() -> Self {
+        Self {
+            batch: HitBatch::empty(),
+            admitted: BTreeMap::new(),
+        }
+    }
 }
 
 fn merge_hits(into: &mut SearchHits, batch: HitBatch) {
@@ -1728,10 +1749,13 @@ fn rank_weight_array(projection: &MemorySearchProjection) -> Result<SqlText, Sto
     Ok(sql)
 }
 
+/// Admission of hit `t`s `$1`. A head has its versions' owner
+/// (`Proxiima.Identity.seriesContract`), so `HeadsOnly` looks the physical
+/// head up among its memory's owner's heads alone.
 fn search_admit_sql(heads_only: bool) -> SqlText {
     let head_filter = if heads_only {
         " AND (EXISTS (SELECT 1 FROM proxiima_core.memory_head h
-                        WHERE h.handle = m.handle AND h.t = m.t)
+                        WHERE h.owner_id = m.owner_id AND h.handle = m.handle AND h.t = m.t)
                 OR m.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()))"
     } else {
         ""
@@ -1833,7 +1857,8 @@ fn tsquery_sql(multilingual: bool, template: &'static str, text: &'static str) -
 
 /// Admit vector-port candidates through the ordinary memory read and the
 /// participating projections. The same memory predicate is used for final
-/// admission, so authorization and request filters have one author.
+/// admission, so authorization and request filters have one author, and a
+/// semantic search pages the rows this statement returns.
 fn semantic_candidate_admission_sql(
     spiices: &[SpiiceScan<'_>],
     req: &MemorySearchRequest,
@@ -1977,14 +2002,14 @@ async fn scan_embeddings_on_connection(
     tuning: &PgTuning,
     overfetch: u32,
     vectors: &crate::vector_index::StoreVectors,
-) -> Result<HitBatch, StorageError> {
+) -> Result<SemanticHits, StorageError> {
     let Some(semantic) = req.semantic.as_ref() else {
         return Err(StorageError::ConstraintViolation(
             "semantic search requires a query embedding".into(),
         ));
     };
     if spiices.is_empty() {
-        return Ok(HitBatch::empty());
+        return Ok(SemanticHits::empty());
     }
     let owner_ids: Vec<uuid::Uuid> = req
         .read_owners
@@ -2009,8 +2034,12 @@ async fn scan_embeddings_on_connection(
         },
     };
     let mut window = overfetch;
-    let mut admitted = BTreeMap::new();
-    let bound = loop {
+    // Every candidate a round found, at the score of the latest round that
+    // found it. Each round admits all of them in one statement and the leg
+    // returns the last round's: one snapshot, which keeps a candidate a later
+    // window leaves out.
+    let mut discovered = BTreeMap::<uuid::Uuid, f32>::new();
+    let (hits, admitted, bound) = loop {
         let candidates = match &candidates {
             SemanticCandidates::Local => {
                 crate::vector_index::local_nearest(
@@ -2029,52 +2058,79 @@ async fn scan_embeddings_on_connection(
         let bound = candidates.bound;
         let candidates = candidates.candidates;
         let fetched = candidates.len();
-        let candidate_ids: Vec<_> = candidates
+        discovered.extend(
+            candidates
+                .into_iter()
+                .map(|candidate| (candidate.memory_id.into_inner(), candidate.similarity_score)),
+        );
+        let candidate_ids: Vec<_> = discovered.keys().copied().collect();
+        let admitted = admit_semantic_candidates_on_connection(
+            connection.as_mut(),
+            &sql,
+            req,
+            &owner_ids,
+            &schema_sets,
+            &candidate_ids,
+        )
+        .await?;
+        // The statement reads discovered `t`s only, so each row has its hit.
+        let hits: BTreeMap<_, _> = discovered
             .iter()
-            .map(|candidate| candidate.memory_id.into_inner())
-            .collect();
-        let mut query = sqlx::query_as(sql.clone())
-            .bind(&candidate_ids)
-            .bind(&owner_ids)
-            .bind(kind_literal(req.kind))
-            .bind(req.schema_id.as_ref().map(SchemaId::as_str))
-            .bind(req.since)
-            .bind(req.until);
-        if !req.tags.is_empty() {
-            query = query.bind(&req.tags);
-        }
-        for schema_ids in &schema_sets {
-            query = query.bind(schema_ids);
-        }
-        let rows: Vec<AdmitRow> = query
-            .fetch_all(connection.as_mut())
-            .await
-            .map_err(map_err)?;
-        let allowed: BTreeSet<_> = rows.into_iter().map(|row| row.t).collect();
-        for candidate in candidates {
-            let t = candidate.memory_id.into_inner();
-            if allowed.contains(&t) {
-                admitted.insert(
+            .filter(|(t, _)| admitted.contains_key(t))
+            .map(|(&t, &score)| {
+                (
                     t,
                     Hit {
                         t,
                         lexical_score: None,
-                        similarity_score: Some(candidate.similarity_score),
+                        similarity_score: Some(score),
                     },
-                );
-            }
-        }
-        let Some(next) = next_candidate_window(window, fetched, admitted.len(), overfetch) else {
-            break bound;
+                )
+            })
+            .collect();
+        let Some(next) = next_candidate_window(window, fetched, hits.len(), overfetch) else {
+            break (hits, admitted, bound);
         };
         window = next;
     };
-    Ok(HitBatch {
-        rows: admitted.into_values().collect(),
+    let batch = HitBatch {
+        rows: hits.into_values().collect(),
         bound,
-    })
+    };
+    Ok(SemanticHits { batch, admitted })
 }
 
+/// The rows of `candidate_ids` that `sql`, the
+/// [`semantic_candidate_admission_sql`], admits, by `t`: one statement.
+async fn admit_semantic_candidates_on_connection(
+    connection: &mut PgConnection,
+    sql: &SqlText,
+    req: &MemorySearchRequest,
+    owner_ids: &[uuid::Uuid],
+    schema_sets: &[Vec<&str>],
+    candidate_ids: &[uuid::Uuid],
+) -> Result<BTreeMap<uuid::Uuid, AdmitRow>, StorageError> {
+    if candidate_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut query = sqlx::query_as(sql.clone())
+        .bind(candidate_ids)
+        .bind(owner_ids)
+        .bind(kind_literal(req.kind))
+        .bind(req.schema_id.as_ref().map(SchemaId::as_str))
+        .bind(req.since)
+        .bind(req.until);
+    if !req.tags.is_empty() {
+        query = query.bind(&req.tags);
+    }
+    for schema_ids in schema_sets {
+        query = query.bind(schema_ids);
+    }
+    let rows: Vec<AdmitRow> = query.fetch_all(connection).await.map_err(map_err)?;
+    Ok(rows.into_iter().map(|row| (row.t, row)).collect())
+}
+
+/// Admit `hits` in one statement.
 async fn admit_hits_on_connection(
     connection: &mut PgConnection,
     req: &MemorySearchRequest,
@@ -2103,32 +2159,39 @@ async fn admit_hits_on_connection(
         .map_err(map_err)?;
     Ok(rows
         .into_iter()
-        .filter_map(|row| {
-            let hit = hits.get(&row.t)?;
-            let kind = EntityKind::from(row.kind);
-            let score = match req.mode {
-                SearchMode::Semantic => hit.similarity_score.unwrap_or_default(),
-                // Hybrid with an embedding is fused after admission. Without
-                // an embedding its effective ranking remains lexical.
-                SearchMode::Lexical | SearchMode::Hybrid => hit.lexical_score.unwrap_or_default(),
-            };
-            Some(MemorySearchResult {
-                memory_id: MemoryId::new(row.t),
-                writer: proxiima_core::WriterAttribution {
-                    by: row.by,
-                    via: row.via,
-                },
-                kind,
-                schema_id: SchemaId::new(row.schema_id),
-                created_at: row.created_at,
-                occurred_at: row.occurred_at,
-                snippet: String::new(),
-                score,
-                lexical_score: hit.lexical_score.unwrap_or_default(),
-                similarity_score: hit.similarity_score.unwrap_or_default(),
-            })
-        })
+        .filter_map(|row| admit_row_to_result(req, hits, row))
         .collect())
+}
+
+/// An admitted row's result, scored from its hit in `hits`, where both legs'
+/// scores are merged.
+fn admit_row_to_result(
+    req: &MemorySearchRequest,
+    hits: &BTreeMap<uuid::Uuid, Hit>,
+    row: AdmitRow,
+) -> Option<MemorySearchResult> {
+    let hit = hits.get(&row.t)?;
+    let score = match req.mode {
+        SearchMode::Semantic => hit.similarity_score.unwrap_or_default(),
+        // Hybrid with an embedding is fused after admission. Without
+        // an embedding its effective ranking remains lexical.
+        SearchMode::Lexical | SearchMode::Hybrid => hit.lexical_score.unwrap_or_default(),
+    };
+    Some(MemorySearchResult {
+        memory_id: MemoryId::new(row.t),
+        writer: proxiima_core::WriterAttribution {
+            by: row.by,
+            via: row.via,
+        },
+        kind: EntityKind::from(row.kind),
+        schema_id: SchemaId::new(row.schema_id),
+        created_at: row.created_at,
+        occurred_at: row.occurred_at,
+        snippet: String::new(),
+        score,
+        lexical_score: hit.lexical_score.unwrap_or_default(),
+        similarity_score: hit.similarity_score.unwrap_or_default(),
+    })
 }
 
 fn page_hits(

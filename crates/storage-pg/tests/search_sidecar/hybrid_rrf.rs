@@ -108,6 +108,127 @@ async fn hybrid_uses_rescue_and_ranks_real_single_leg_membership() -> TestResult
     Ok(())
 }
 
+/// A semantic page takes the admission rows of its leg's last round; a
+/// lexical or hybrid page admits its hits in one statement. Either way a
+/// result carries what a listing, which admits every head itself, reports
+/// for the memory, and the scores of each leg it is in. Superseded versions
+/// stay out of a heads-only page in every mode.
+#[tokio::test]
+async fn each_leg_admits_the_rows_a_listing_admits() -> TestResult {
+    let (pg, _guard) = fresh_pg("hybrid_rrf_admission").await;
+    let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+    let lexical = seed_note(&pg, owner, "Partial result", "quartz").await?;
+    let semantic = seed_note(&pg, owner, "Concept result", "Unrelated vocabulary").await?;
+    let both = seed_note(&pg, owner, "Exact result", "quartz nebula").await?;
+    seed_embedding(&pg, owner, semantic, &embed_vector()).await?;
+    seed_embedding(&pg, owner, both, &embed_vector_xy(0.8, 0.6)).await?;
+    let retired = TestNote::new("Retired result", "quartz nebula")
+        .create(&pg, owner)
+        .await?;
+    seed_embedding(&pg, owner, retired.memory_id.into_inner(), &embed_vector()).await?;
+    TestNote::new("Retired result", "Separate vocabulary")
+        .handle(retired.handle)
+        .create(&pg, owner)
+        .await?;
+    let retired = retired.memory_id.into_inner();
+    let projection = note_projection();
+    let scope = owner_scope_for_tests(&[owner]);
+    let search = |req: MemorySearchRequest| {
+        let (pg, scope, projection) = (&pg, &scope, &projection);
+        async move {
+            pg.search_memories(Some(scope), &req, std::slice::from_ref(projection))
+                .await
+        }
+    };
+    for supersession in [
+        SupersessionStatus::HeadsOnly,
+        SupersessionStatus::IncludeSuperseded,
+    ] {
+        let mut req = hybrid_request(owner, "quartz nebula");
+        req.supersession = supersession;
+        req.limit = 50;
+        let mut listing = req.clone();
+        listing.query = None;
+        listing.semantic = None;
+        let listing = search(listing).await?;
+        let listed = hits_by_id(&listing);
+        let admitted = |page: &MemorySearchPage| {
+            for hit in &page.results {
+                let t = hit.memory_id.into_inner();
+                let listed = listed
+                    .get(&t)
+                    .unwrap_or_else(|| panic!("{t} is a result the listing does not admit"));
+                assert_eq!(
+                    *hit,
+                    proxiima_core::verbs::query::MemorySearchResult {
+                        score: hit.score,
+                        lexical_score: hit.lexical_score,
+                        similarity_score: hit.similarity_score,
+                        ..(*listed).clone()
+                    },
+                    "a result carries the row admission read for it"
+                );
+            }
+        };
+        let expected = |ids: &[Uuid]| {
+            let mut ids = ids.to_vec();
+            if supersession == SupersessionStatus::IncludeSuperseded {
+                ids.push(retired);
+            }
+            ids.into_iter().collect::<BTreeSet<_>>()
+        };
+
+        let hybrid = search(req.clone()).await?;
+        admitted(&hybrid);
+        let fused = hits_by_id(&hybrid);
+        assert_eq!(
+            fused.keys().copied().collect::<BTreeSet<_>>(),
+            expected(&[lexical, semantic, both])
+        );
+        req.mode = SearchMode::Lexical;
+        let lexical_page = search(req.clone()).await?;
+        admitted(&lexical_page);
+        assert_eq!(
+            hits_by_id(&lexical_page)
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            expected(&[lexical, both])
+        );
+        req.mode = SearchMode::Semantic;
+        let semantic_page = search(req.clone()).await?;
+        admitted(&semantic_page);
+        assert_eq!(
+            hits_by_id(&semantic_page)
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            expected(&[semantic, both])
+        );
+        for hit in &lexical_page.results {
+            let t = hit.memory_id.into_inner();
+            assert_score(fused[&t].lexical_score, hit.lexical_score);
+            assert_score(hit.score, hit.lexical_score);
+            assert_score(hit.similarity_score, 0.0);
+        }
+        for hit in &semantic_page.results {
+            let t = hit.memory_id.into_inner();
+            assert_score(fused[&t].similarity_score, hit.similarity_score);
+            assert_score(hit.score, hit.similarity_score);
+            assert_score(hit.lexical_score, 0.0);
+        }
+        assert_score(fused[&lexical].similarity_score, 0.0);
+        assert_score(fused[&semantic].lexical_score, 0.0);
+        assert!(fused[&both].lexical_score > 0.0 && fused[&both].similarity_score > 0.0);
+        if supersession == SupersessionStatus::HeadsOnly {
+            assert_score(fused[&both].score, 0.5 / 62.0 + 0.5 / 61.0);
+            assert_score(fused[&semantic].score, 0.5 / 61.0);
+            assert_score(fused[&lexical].score, 0.5 / 62.0);
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn hybrid_min_score_keeps_either_raw_leg_and_drops_both_below_floor() -> TestResult {
     let (pg, _guard) = fresh_pg("hybrid_rrf_floor").await;
