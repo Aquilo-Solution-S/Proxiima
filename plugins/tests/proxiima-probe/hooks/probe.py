@@ -6,6 +6,7 @@ is recorded as it arrived, for later contract fixtures.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,10 @@ with events.open("a") as log:
         "tag": tag,
         "word": word if event in OFFERS_CONTEXT else None,
         "payload": payload,
+        # Values only of the two paths: a plugin's options arrive in such variables, and some
+        # are secrets.
+        "plugin_env": {name: os.environ[name] if name in ("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA") else None
+                       for name in sorted(os.environ) if "PLUGIN" in name},
     }) + "\n")
 
 if event in OFFERS_CONTEXT:

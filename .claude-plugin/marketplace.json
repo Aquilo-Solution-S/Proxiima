@@ -12,6 +12,12 @@
       "description": "Skills for coding agents that keep their memory in Proxiima. Add the Proxiima MCP server with your CLI first.",
       "source": "./plugins/proxiima",
       "category": "development"
+    },
+    {
+      "name": "proxiima-compaction",
+      "description": "Reminds the agent to consolidate into Proxiima after its context is compacted. Needs the proxiima plugin's consolidate skill.",
+      "source": "./plugins/proxiima-compaction",
+      "category": "development"
     }
   ]
 }

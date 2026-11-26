@@ -1,0 +1,5 @@
+{
+  "name": "proxiima-compaction",
+  "description": "Reminds the agent to consolidate into Proxiima after its context is compacted. Needs the proxiima plugin's consolidate skill.",
+  "hooks": "./hooks/hooks.json"
+}
