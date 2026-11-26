@@ -14,26 +14,32 @@ use proxiima_core::verbs::query::{
     TagMatch,
 };
 use proxiima_core::verbs::schema::MemorySearchProjection;
-use proxiima_core::{EdgeEndpoint, EdgeKind, MemoryKind, OwnerId, SchemaId, SqlText, UserId};
-use proxiima_pg_testkit::{db_url, drop_db};
+use proxiima_core::{
+    AccessCeiling, EdgeEndpoint, EdgeKind, GoalAccess, GroupId, MemoryId, MemoryKind, OwnerId,
+    Relation, Role, SchemaId, SqlText, UserId,
+};
+use proxiima_pg_testkit::{db_url, drop_db, split_role_urls};
 use proxiima_storage_pg::export_statement_sql_for_tests;
 use proxiima_storage_pg::test_fixtures::{
-    TestMemory, TestNote, create_core_db, create_embedding, create_user, enqueue_embedding_job,
+    TestGoal, TestMemory, TestNote, add_member, create_core_db, create_embedding, create_user,
+    enqueue_embedding_job, insert_goal_grant,
 };
 use proxiima_storage_pg::verbs::fact_embeddings::{
     claim_embedding_jobs_sql_for_tests, reclaim_stale_embedding_jobs_sql_for_tests,
 };
 use proxiima_storage_pg::verbs::query::{
     ancestor_hop_sql_for_tests, descendant_hop_sql_for_tests, explain_owned_head_handle_for_tests,
-    inbound_pin_sql_for_tests, memory_page_sql_for_tests, ranked_candidate_sql_for_tests,
-    ranked_projection_sql_for_tests, search_admit_sql_for_tests,
-    semantic_candidate_admission_sql_for_tests, set_hnsw_search_sql_for_tests,
-    staged_candidate_sql_for_tests, substring_candidate_sql_for_tests, substring_sql_for_tests,
+    goal_visible_memories_sql_for_tests, inbound_pin_sql_for_tests, memory_page_sql_for_tests,
+    ranked_candidate_sql_for_tests, ranked_projection_sql_for_tests, search_admit_sql_for_tests,
+    search_owners_sql_for_tests, semantic_candidate_admission_sql_for_tests,
+    set_hnsw_search_sql_for_tests, staged_candidate_sql_for_tests,
+    substring_candidate_sql_for_tests, substring_sql_for_tests,
 };
 use proxiima_storage_pg::verbs::{
     fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests,
 };
 use proxiima_storage_pg::{PgStorage, begin_owner_transaction};
+use sqlx::Connection;
 use uuid::Uuid;
 
 /// `EXPLAIN` of a production statement, as JSON without costs.
@@ -1138,6 +1144,396 @@ async fn exact_matches_that_fill_the_window_end_the_lexical_search() {
     .await;
     let _ = drop_db(&db_name).await;
     result.expect("staged lexical buffers failed");
+}
+
+/// The tables the Goal collaboration helpers read.
+const GOAL_TABLES: [&str; 5] = [
+    "goal_memory_publication",
+    "goal_work_binding",
+    "goal_access_grant",
+    "goal_head",
+    "group_role_projection",
+];
+/// The reader's notes, and how many of them are embedded.
+const GOAL_FREE_NOTES: i32 = 200;
+const GOAL_FREE_EMBEDDED: usize = 20;
+/// Owners beside the reader, each with notes its Goal publishes and binds to
+/// its work and a person granted that Goal, and groups of those persons: the
+/// rows a Goal route reads.
+const GOAL_SOURCES: usize = 20;
+const GOAL_SOURCE_NOTES: i32 = 20;
+const GOAL_GROUPS: usize = 5;
+
+/// Seed the reader's notes and the Goal routes of the owners beside it.
+async fn seed_goal_routes(pg: &PgStorage, reader: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = pg.pool_for_tests();
+    let sources: Vec<Uuid> = (0..GOAL_SOURCES).map(|_| Uuid::now_v7()).collect();
+    let mut owners = vec![(reader, GOAL_FREE_NOTES)];
+    owners.extend(sources.iter().map(|source| (*source, GOAL_SOURCE_NOTES)));
+    seed_owners_corpus(pool, &owners, reader, 0).await?;
+    let groups: Vec<GroupId> = (0..GOAL_GROUPS)
+        .map(|_| GroupId::new(Uuid::now_v7()))
+        .collect();
+    for (index, source) in sources.iter().enumerate() {
+        let goal = TestGoal::new(&Uuid::now_v7().to_string())
+            .create(pg, OwnerId::from(UserId::new(*source)))
+            .await?
+            .handle;
+        let grantee = UserId::new(Uuid::now_v7());
+        create_user(pool, grantee).await?;
+        insert_goal_grant(
+            pool,
+            goal,
+            grantee.into_inner(),
+            *source,
+            Role::new(AccessCeiling::Fact, AccessCeiling::None)?.with_goals(GoalAccess::Reads),
+        )
+        .await?;
+        add_member(pool, groups[index % GOAL_GROUPS], grantee, Relation::Viewer).await?;
+    }
+    // Raw INSERTs: no write path for publications or work bindings is
+    // reachable from the test fixtures.
+    sqlx::query(
+        "INSERT INTO proxiima_core.goal_memory_publication
+             (goal_handle, memory_t, source_owner, source_generation,
+              controller_generation, permitted_use, published_by)
+         SELECT gh.handle, mh.t, mh.owner_id, mh.authority_generation,
+                gh.authority_generation, 'read', gh.owner_id
+           FROM proxiima_core.goal_head gh
+           JOIN proxiima_core.memory_head mh ON mh.owner_id = gh.owner_id
+          WHERE gh.owner_id = ANY($1::uuid[])",
+    )
+    .bind(&sources)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO proxiima_core.goal_work_binding
+             (goal_handle, memory_handle, source_owner, source_generation,
+              controller_generation, bound_by)
+         SELECT gh.handle, mh.handle, mh.owner_id, mh.authority_generation,
+                gh.authority_generation, gh.owner_id
+           FROM proxiima_core.goal_head gh
+           JOIN proxiima_core.memory_head mh ON mh.owner_id = gh.owner_id
+          WHERE gh.owner_id = ANY($1::uuid[])",
+    )
+    .bind(&sources)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The SECURITY DEFINER helpers a Goal route calls.
+const GOAL_HELPERS: [&str; 6] = [
+    "goal_grants_held",
+    "goal_memory_read_routes",
+    "goal_visible_memory_ids",
+    "goal_visible_memory_heads",
+    "goal_memory_read_admitted",
+    "goal_read_admitted",
+];
+
+/// Calls of the Goal helpers and scans of the Goal tables so far in this
+/// transaction, a helper's own statements included. Calls are counted while
+/// `track_functions` is `all`.
+async fn goal_reads(tx: &mut sqlx::PgConnection) -> Result<(i64, i64), sqlx::Error> {
+    sqlx::query_as(
+        "SELECT (SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_xact_user_functions
+                  WHERE schemaname = 'proxiima_core' AND funcname = ANY($1::text[])),
+                (SELECT COALESCE(sum(seq_scan + COALESCE(idx_scan, 0)), 0)::bigint
+                   FROM pg_stat_xact_user_tables
+                  WHERE schemaname = 'proxiima_core' AND relname = ANY($2::text[]))",
+    )
+    .bind(&GOAL_HELPERS[..])
+    .bind(&GOAL_TABLES[..])
+    .fetch_one(tx)
+    .await
+}
+
+/// The nodes of an `EXPLAIN (ANALYZE, FORMAT JSON)` plan over a Goal table or
+/// a Goal helper that ran.
+fn goal_nodes_run(plan: &serde_json::Value) -> Vec<String> {
+    match plan {
+        serde_json::Value::Array(items) => items.iter().flat_map(goal_nodes_run).collect(),
+        serde_json::Value::Object(node) => {
+            let mut run: Vec<String> = node.values().flat_map(goal_nodes_run).collect();
+            let name = node
+                .get("Relation Name")
+                .or_else(|| node.get("Function Name"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if (name.starts_with("goal_") || GOAL_TABLES.contains(&name))
+                && node.get("Actual Loops").and_then(serde_json::Value::as_i64) != Some(0)
+            {
+                run.push(name.to_owned());
+            }
+            run
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The statements of an owner search that may ask a Goal route.
+#[derive(Clone, Copy, Debug)]
+enum GoalRouteStatement {
+    LexicalCandidates,
+    LocalVectorCandidates,
+    Admission,
+    RemoteVectorHeads,
+    RemoteVectorVersions,
+    SearchOwners,
+}
+
+const GOAL_ROUTE_STATEMENTS: [GoalRouteStatement; 6] = [
+    GoalRouteStatement::LexicalCandidates,
+    GoalRouteStatement::LocalVectorCandidates,
+    GoalRouteStatement::Admission,
+    GoalRouteStatement::RemoteVectorHeads,
+    GoalRouteStatement::RemoteVectorVersions,
+    GoalRouteStatement::SearchOwners,
+];
+
+/// Bind the reader's owner scope to the transaction, and with `subject` its
+/// Goal subject.
+async fn bind_reader_scope(
+    tx: &mut sqlx::PgConnection,
+    reader: Uuid,
+    subject: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT set_config('app.proxiima_scope', 'owner', true),
+                set_config('app.owner', $1, true),
+                set_config('app.read_abstraction', $1, true),
+                set_config('app.read_perspective', $1, true),
+                set_config('app.read_goal', $1, true),
+                set_config('app.write_owner', $1, true)",
+    )
+    .bind(format!("{{{reader}}}"))
+    .execute(&mut *tx)
+    .await?;
+    if let Some(subject) = subject {
+        sqlx::query("SELECT set_config('app.goal_subject', $1, true)")
+            .bind(subject)
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// `statement` under `EXPLAIN (ANALYZE, FORMAT JSON)`, which runs it, over
+/// the reader's `owners` and, for the admission, its `candidates`.
+async fn explain_goal_route(
+    tx: &mut sqlx::PgConnection,
+    statement: GoalRouteStatement,
+    owners: &[Uuid],
+    candidates: &[Uuid],
+) -> Result<serde_json::Value, sqlx::Error> {
+    let mut explain = SqlText::new("EXPLAIN (ANALYZE, FORMAT JSON) ");
+    match statement {
+        GoalRouteStatement::LexicalCandidates => {
+            explain.push(
+                "SELECT t FROM proxiima_core.search_lexical_candidates($1, $2, NULL, NULL,
+                     NULL, NULL, $3, $4, true, false, true, 'fact', false)",
+            );
+            sqlx::query_scalar(explain)
+                .bind("needle")
+                .bind(20_i64)
+                .bind(owners)
+                .bind(&["core/agent-note-v1"][..])
+                .fetch_one(tx)
+                .await
+        }
+        GoalRouteStatement::LocalVectorCandidates => {
+            explain.push(
+                "SELECT memory_id FROM proxiima_core.vector_candidates_d1024($1, $2, $3, $4, true)",
+            );
+            sqlx::query_scalar(explain)
+                .bind(owners)
+                .bind("test-embed")
+                .bind(pgvector::Vector::from(unit_values(EmbeddingDim::D1024)))
+                .bind(20_i64)
+                .fetch_one(tx)
+                .await
+        }
+        GoalRouteStatement::Admission => {
+            explain.push_text(&search_admit_sql_for_tests(true));
+            sqlx::query_scalar(explain)
+                .bind(candidates)
+                .bind(owners)
+                .bind(Some("fact"))
+                .bind(None::<&str>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<time::OffsetDateTime>)
+                .fetch_one(tx)
+                .await
+        }
+        GoalRouteStatement::RemoteVectorHeads => {
+            explain.push_text(&goal_visible_memories_sql_for_tests(
+                SupersessionStatus::HeadsOnly,
+            ));
+            sqlx::query_scalar(explain).bind(owners).fetch_one(tx).await
+        }
+        GoalRouteStatement::RemoteVectorVersions => {
+            explain.push_text(&goal_visible_memories_sql_for_tests(
+                SupersessionStatus::IncludeSuperseded,
+            ));
+            sqlx::query_scalar(explain).bind(owners).fetch_one(tx).await
+        }
+        GoalRouteStatement::SearchOwners => {
+            explain.push_text(&search_owners_sql_for_tests());
+            sqlx::query_scalar(explain).fetch_one(tx).await
+        }
+    }
+}
+
+/// An owner search without a Goal subject, unset or empty, calls no Goal
+/// helper and reads no Goal table: the lexical and local vector candidate
+/// functions, the admission, the remote vector filter's Goal-visible
+/// memories in both supersession modes, and the narrowing of the named
+/// owners. No Goal node of their plans runs. The admission's candidates
+/// include another owner's published memory, which its row security asks
+/// the Goal route about. With a Goal subject each statement calls the
+/// helpers and reads the Goal tables, which shows that both counts see a
+/// helper's own statements. A malformed subject fails each statement with
+/// 22P02 instead of reading as no subject.
+///
+/// The statements run as the runtime role in a session of their own, which
+/// has never set a Goal subject, so the first case reads it unset (NULL).
+#[tokio::test]
+async fn an_owner_search_without_a_goal_subject_calls_no_goal_helper() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let reader = Uuid::now_v7();
+        seed_goal_routes(&pg, reader).await?;
+        let notes: Vec<Uuid> =
+            sqlx::query_scalar("SELECT t FROM proxiima_core.memory WHERE owner_id = $1 ORDER BY t")
+                .bind(reader)
+                .fetch_all(pool)
+                .await?;
+        let owner = OwnerId::from(UserId::new(reader));
+        for note in notes.iter().take(GOAL_FREE_EMBEDDED) {
+            create_embedding(&pg, owner, MemoryId::new(*note), "test-embed", 1).await?;
+        }
+        let foreign: Uuid = sqlx::query_scalar(
+            "SELECT memory_t FROM proxiima_core.goal_memory_publication LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await?;
+        sqlx::raw_sql(
+            "VACUUM (ANALYZE) proxiima_core.memory_head, proxiima_core.memory,
+                 proxiima_core.projection, proxiima_core.agent_note_v1,
+                 proxiima_core.embeddings, proxiima_core.embedding_heads,
+                 proxiima_core.goal, proxiima_core.goal_head,
+                 proxiima_core.goal_access_grant, proxiima_core.goal_memory_publication,
+                 proxiima_core.goal_work_binding, proxiima_core.group_role_projection",
+        )
+        .execute(pool)
+        .await?;
+        // Sessions opened from here on count function calls.
+        sqlx::raw_sql(
+            "DO $track$ BEGIN
+                 EXECUTE format('ALTER DATABASE %I SET track_functions = ''all''',
+                                current_database());
+             END $track$",
+        )
+        .execute(pool)
+        .await?;
+
+        let owners = vec![reader];
+        let mut candidates = notes.clone();
+        candidates.push(foreign);
+        let (runtime_url, _) = split_role_urls(&db_name).await?;
+        let mut session = sqlx::PgConnection::connect(&runtime_url).await?;
+        let mut tx = session.begin().await?;
+        bind_reader_scope(&mut tx, reader, None).await?;
+        let unset: bool =
+            sqlx::query_scalar("SELECT current_setting('app.goal_subject', true) IS NULL")
+                .fetch_one(&mut *tx)
+                .await?;
+        assert!(unset, "the session must start without a Goal subject");
+        let mut measured = Vec::new();
+        for subject in [None, Some(String::new()), Some(reader.to_string())] {
+            if let Some(subject) = &subject {
+                bind_reader_scope(&mut tx, reader, Some(subject)).await?;
+            }
+            for statement in GOAL_ROUTE_STATEMENTS {
+                // The first run plans the helpers' statements for this
+                // session, which probes their indexes; the second is measured.
+                let mut run = ((0, 0), serde_json::Value::Null);
+                for _ in 0..2 {
+                    let before = goal_reads(&mut tx).await?;
+                    let plan = explain_goal_route(&mut tx, statement, &owners, &candidates).await?;
+                    let after = goal_reads(&mut tx).await?;
+                    run = ((after.0 - before.0, after.1 - before.1), plan);
+                }
+                measured.push((subject.clone(), statement, run));
+            }
+        }
+        tx.rollback().await?;
+
+        for (subject, statement, ((calls, scans), plan)) in measured {
+            if matches!(
+                statement,
+                GoalRouteStatement::LexicalCandidates
+                    | GoalRouteStatement::LocalVectorCandidates
+                    | GoalRouteStatement::Admission
+            ) {
+                assert!(
+                    plan[0]["Plan"]["Actual Rows"].as_f64().unwrap_or_default() > 0.0,
+                    "the {statement:?} must find the reader's notes; plan:\n{plan}"
+                );
+            }
+            if subject
+                .as_deref()
+                .is_some_and(|subject| !subject.is_empty())
+            {
+                assert!(
+                    calls > 0 && scans > 0,
+                    "with a Goal subject the {statement:?} calls the Goal helpers and reads \
+                     the Goal tables: {calls} calls, {scans} scans"
+                );
+            } else {
+                assert_eq!(
+                    (calls, scans),
+                    (0, 0),
+                    "with the Goal subject {subject:?} the {statement:?} must call no Goal \
+                     helper and read no Goal table; plan:\n{plan}"
+                );
+                let run = goal_nodes_run(&plan);
+                assert!(
+                    run.is_empty(),
+                    "with the Goal subject {subject:?} the {statement:?} must run no Goal \
+                     node, ran {run:?}; plan:\n{plan}"
+                );
+            }
+        }
+
+        for statement in GOAL_ROUTE_STATEMENTS {
+            let mut tx = session.begin().await?;
+            bind_reader_scope(&mut tx, reader, Some("not-a-uuid")).await?;
+            let malformed = explain_goal_route(&mut tx, statement, &owners, &candidates)
+                .await
+                .expect_err("a malformed Goal subject must fail the statement");
+            assert_eq!(
+                malformed
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .as_deref(),
+                Some("22P02"),
+                "the {statement:?}: {malformed}"
+            );
+            tx.rollback().await?;
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("goal-free search failed");
 }
 
 /// The table's primary-key columns in index order, read the way the export

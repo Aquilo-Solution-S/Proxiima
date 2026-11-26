@@ -3327,6 +3327,8 @@ SET LOCAL ROLE proxiima_goal_reader;
 -- `Causa.Grant.gives_iff` and `Causa.drop_ends_grant`.
 -- `Proxiima.GoalCollaboration.grantInForce`: filter expiry at statement time here and join the current epoch at use.
 -- On an invited group route `Proxiima.OwnerAuthority.GoalAccess.canRead` uses the member's own Goal access.
+-- Without a Goal subject no Goal route exists: this, goal_memory_read_routes and
+-- the two admission checks read no table then. A malformed subject still fails its cast.
 CREATE OR REPLACE FUNCTION proxiima_core.goal_grants_held()
 RETURNS TABLE(goal_handle uuid, subject_id uuid, controller_generation bigint,
               read_ceiling proxiima_core.memory_ceiling, write_ceiling proxiima_core.memory_ceiling,
@@ -3341,7 +3343,8 @@ AS $function$
     SELECT a.goal_handle, a.subject_id, a.controller_generation,
            a.read_ceiling, a.write_ceiling, a.goal_access, a.administers, a.manage, true
       FROM proxiima_core.goal_access_grant a, holder
-     WHERE a.subject_id = holder.person
+     WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+       AND a.subject_id = holder.person
        AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
     UNION ALL
     SELECT a.goal_handle, a.subject_id, a.controller_generation,
@@ -3352,7 +3355,8 @@ AS $function$
       JOIN holder ON true
       JOIN proxiima_core.group_role_projection m
         ON m.member_user_id = holder.person AND m.group_id = a.subject_id
-     WHERE (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
+     WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+       AND (a.expires_at IS NULL OR a.expires_at > statement_timestamp())
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_grants_held() FROM PUBLIC;
 
@@ -3406,7 +3410,8 @@ AS $function$
           JOIN proxiima_core.live_memory m ON m.handle = mh.handle AND m.owner_id = mh.owner_id
          WHERE a.read_ceiling >= m.kind::text::proxiima_core.memory_ceiling
     )
-    SELECT * FROM published UNION SELECT * FROM working
+    SELECT * FROM published WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+    UNION SELECT * FROM working WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_memory_read_routes() FROM PUBLIC;
 
@@ -3450,7 +3455,8 @@ RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'pg_catalog', 'pg_temp'
 AS $function$
-    SELECT EXISTS (SELECT 1 FROM proxiima_core.goal_visible_memory_ids() visible
+    SELECT NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM proxiima_core.goal_visible_memory_ids() visible
                     WHERE visible.memory_t = candidate_t)
 $function$;
 REVOKE ALL ON FUNCTION proxiima_core.goal_memory_read_admitted(uuid) FROM PUBLIC;
@@ -3461,7 +3467,7 @@ RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'pg_catalog', 'pg_temp'
 AS $function$
-    SELECT EXISTS (
+    SELECT NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL AND EXISTS (
         SELECT 1 FROM proxiima_core.goal g
           JOIN proxiima_core.goal_head h ON h.handle = g.handle
           JOIN proxiima_core.goal_grants_held() a ON a.goal_handle = h.handle
@@ -3910,7 +3916,8 @@ BEGIN
        OR requested_owners IS NULL
        OR array_position(requested_owners, NULL) IS NOT NULL
        OR NOT requested_owners <@ (proxiima_core.search_owner_ids()
-           || ARRAY(SELECT DISTINCT visible.owner_id FROM proxiima_core.goal_visible_memory_ids() visible))
+           || ARRAY(SELECT DISTINCT visible.owner_id FROM proxiima_core.goal_visible_memory_ids() visible
+                     WHERE NULLIF(current_setting('app.goal_subject', true), '') IS NOT NULL))
     THEN
         RAISE EXCEPTION 'search requires an authenticated owner scope'
             USING ERRCODE = 'PX001', CONSTRAINT = 'search_scope_not_authorized';
@@ -3972,7 +3979,8 @@ IF do_recency AND do_rescue THEN
             AND p.schema_id = ANY($8::text[])
             AND (p.search_tsv @@ $13::tsquery OR ($14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery))
              AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
+                   OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL
+                       AND p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
@@ -3996,7 +4004,8 @@ IF exact_tsq IS NOT NULL AND exact_tsq <> ''::tsquery THEN
             AND p.schema_id = ANY($8::text[])
             AND (p.search_tsv @@ $13::tsquery)
              AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
+                   OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL
+                       AND p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
@@ -4029,7 +4038,8 @@ RETURN QUERY EXECUTE '
             AND p.schema_id = ANY($8::text[])
             AND ($14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery AND NOT COALESCE(p.search_tsv @@ $13::tsquery, false))
              AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
-                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
+                   OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL
+                       AND p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
@@ -4088,7 +4098,7 @@ IF requested_schemas && ARRAY['core/agent-derivation-v1']::text[] THEN legs := l
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.title, ''''), NULLIF(c.body, ''''), proxiima_core.lexical_text_array(c.tags)])) LIKE $1 ESCAPE ''\'')
              AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN c.tags @> $3::text[] ELSE c.tags && $3::text[] END)
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/agent-derivation-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/agent-derivation-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -4111,7 +4121,7 @@ IF requested_schemas && ARRAY['core/agent-note-v1']::text[] THEN legs := legs ||
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.title, ''''), NULLIF(c.body, ''''), proxiima_core.lexical_text_array(c.tags)])) LIKE $1 ESCAPE ''\'')
              AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN c.tags @> $3::text[] ELSE c.tags && $3::text[] END)
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/agent-note-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/agent-note-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -4134,7 +4144,7 @@ IF requested_schemas && ARRAY['core/interpretation-v1']::text[] THEN legs := leg
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.claim, '''')])) LIKE $1 ESCAPE ''\'')
              AND $3::text[] IS NULL
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/interpretation-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/interpretation-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL
@@ -4157,7 +4167,7 @@ IF requested_schemas && ARRAY['core/utterance-v1']::text[] THEN legs := legs || 
             AND (lower(proxiima_core.lexical_join(VARIADIC ARRAY[NULLIF(c.text, '''')])) LIKE $1 ESCAPE ''\'')
              AND $3::text[] IS NULL
           WHERE EXISTS (SELECT 1 FROM eligible_memory)
-             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/utterance-v1'']::text[]))))
+             AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = m.t AND (authorized_memory.owner_id = ANY($7::uuid[]) OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR (NULLIF(current_setting(''app.goal_subject'', true), '''') IS NOT NULL AND authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads())) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle AND authorized_head.schema_id = ANY(ARRAY[''core/utterance-v1'']::text[]))))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(m.t) >= $4)
             AND ($5::timestamptz IS NULL

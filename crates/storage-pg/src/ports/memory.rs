@@ -463,13 +463,11 @@ impl MemoryReadPort for PgStorage {
         let result = async {
             // Requested owners narrow the authenticated routes; they never add
             // authority. Goal candidates include exact admitted publications.
-            let authenticated_owners: Vec<uuid::Uuid> = sqlx::query_scalar(
-                "SELECT proxiima_core.search_owner_ids() || ARRAY(
-                    SELECT DISTINCT owner_id FROM proxiima_core.goal_visible_memory_ids())",
-            )
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(crate::error::map_err)?;
+            let authenticated_owners: Vec<uuid::Uuid> =
+                sqlx::query_scalar(verbs::query::SEARCH_OWNERS_SQL)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(crate::error::map_err)?;
             let mut req = req.clone();
             req.read_owners
                 .retain(|owner| authenticated_owners.contains(&owner.into_inner()));
