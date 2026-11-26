@@ -606,7 +606,11 @@ async fn search_local(
     // ranked differently (a route moved, a provider went down)
     // rejects the cursor instead of skipping or repeating rows.
     let fingerprint = bind_stores(
-        query_fingerprint(query, args, since, until, &lanes),
+        bind_hybrid_window(
+            query_fingerprint(query, args, since, until, &lanes),
+            &lanes,
+            crate::ledger!(Proxiima.Search.hybridWindow),
+        ),
         args.stores.as_deref(),
     );
     let after = args
@@ -1232,7 +1236,7 @@ const SEARCH_CURSOR: crate::catalog::cursor::FingerprintedCursor =
     crate::catalog::cursor::FingerprintedCursor {
         version: crate::ledger!(Proxiima.Query.cursorVersion),
         source: "core_search_memories response",
-        rebind_hint: "repeat the query, mode, filters, order, and spaces that produced it",
+        rebind_hint: "repeat the query, mode, filters, order, and spaces that produced it, or restart without the cursor",
     };
 
 fn encode_cursor(cursor: &PageCursor, fingerprint: &str) -> String {
@@ -1285,6 +1289,22 @@ fn query_fingerprint(
         &space_keys,
     ))
     .expect("fingerprint canon serializes");
+    crate::catalog::cursor::fingerprint(&canon)
+}
+
+/// A lane that fuses ranks reads at most `window` hits per leg, so its
+/// ranking depends on the window: a cursor minted at another horizon would
+/// resume a different ranking and could skip or repeat rows. Without a
+/// fusing lane, the fingerprint is the one every earlier release minted.
+fn bind_hybrid_window(fingerprint: String, lanes: &[OwnerLane], window: u32) -> String {
+    if !lanes
+        .iter()
+        .any(|lane| matches!(lane.arm, LaneArm::Hybrid(_)))
+    {
+        return fingerprint;
+    }
+    let canon =
+        serde_json::to_string(&(fingerprint, window)).expect("fingerprint canon serializes");
     crate::catalog::cursor::fingerprint(&canon)
 }
 

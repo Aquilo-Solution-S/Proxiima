@@ -1035,7 +1035,7 @@ macro_rules! ledger {
     };
     // The fixed candidate horizon per hybrid leg.
     (Proxiima.Search.hybridWindow) => {
-        1000
+        200
     };
     // The core projection candidate limit per statement.
     (Proxiima.Search.coreProjectionCap) => {

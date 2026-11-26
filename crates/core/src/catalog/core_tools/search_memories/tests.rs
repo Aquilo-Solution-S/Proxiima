@@ -486,6 +486,32 @@ fn lane(owner: u128, space: Option<&str>) -> OwnerLane {
 }
 
 #[test]
+fn only_a_fusing_lane_binds_the_hybrid_window() {
+    let bind = |lanes: &[OwnerLane], window| super::bind_hybrid_window("fp".into(), lanes, window);
+    let mut fusing = lane(2, Some("m"));
+    let LaneArm::Semantic(query) = fusing.arm else {
+        unreachable!("a semantic lane")
+    };
+    fusing.arm = LaneArm::Hybrid(query);
+    let fusing = [lane(1, None), fusing];
+    assert_ne!(bind(&fusing, 200), bind(&fusing, 1_000));
+    assert_ne!(bind(&fusing, 200), "fp");
+    let degraded = OwnerLane {
+        arm: LaneArm::Degraded,
+        ..lane(3, None)
+    };
+    for unfused in [
+        Vec::new(),
+        vec![lane(1, None)],
+        vec![lane(1, Some("m"))],
+        vec![degraded],
+    ] {
+        assert_eq!(bind(&unfused, 200), "fp");
+        assert_eq!(bind(&unfused, 1_000), "fp");
+    }
+}
+
+#[test]
 fn a_cursor_of_the_other_merge_kind_is_rejected() {
     let lanes = [lane(1, Some("m"))];
     let keyset = PageCursor::Keyset(crate::verbs::query::SearchCursor::Relevance {

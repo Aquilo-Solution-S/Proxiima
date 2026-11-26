@@ -9,10 +9,13 @@ use proxiima_core::verbs::query::{
 
 use super::Hit;
 
-/// Each leg contributes at most 1,000 eligible distinct memories. Spiice
-/// declarations may impose a smaller lexical cap; the semantic chunk scan
-/// retains its shared 1,000-row cap. The windows never depend on page size,
-/// output order or cursor depth. Paging ends at their fused union.
+/// Each leg contributes at most `Proxiima.Search.hybridWindow` eligible
+/// distinct memories. Spiice declarations may impose a smaller lexical cap.
+/// The semantic leg requests this many candidates and widens the request only
+/// while admission leaves the window unfilled; `Proxiima.Search.semanticScanCap`
+/// bounds that request and the index walk's chunk window. The windows never
+/// depend on page size, output order or cursor depth. Paging ends at their
+/// fused union.
 pub(super) const HYBRID_CANDIDATE_WINDOW: u32 =
     proxiima_core::ledger!(Proxiima.Search.hybridWindow);
 const RRF_K: f32 = {
@@ -193,14 +196,17 @@ mod tests {
 
     #[test]
     fn global_windows_are_bounded_per_leg_before_union() {
-        let (mut results, hits): (Vec<_>, Vec<_>) = (1..=1_001)
+        let window = u128::from(HYBRID_CANDIDATE_WINDOW);
+        let semantic_first = window + 2;
+        let (mut results, hits): (Vec<_>, Vec<_>) = (1..=window + 1)
             .map(|t| result(t, Some(0.5), None))
-            .chain((2_001..=3_001).map(|t| result(t, None, Some(0.5))))
+            .chain((semantic_first..=semantic_first + window).map(|t| result(t, None, Some(0.5))))
             .unzip();
         let hits = hits.into_iter().map(|hit| (hit.t, hit)).collect();
-        apply_hybrid_fusion(&request_with_tags(), &mut results, &hits);
-        assert_eq!(results.len(), 2_000);
-        for excluded in [1, 2_001] {
+        let bound = apply_hybrid_fusion(&request_with_tags(), &mut results, &hits);
+        assert_eq!(bound, CandidateBound::Bounded);
+        assert_eq!(u128::try_from(results.len()), Ok(2 * window));
+        for excluded in [1, semantic_first] {
             assert!(
                 !results
                     .iter()
@@ -224,8 +230,10 @@ mod tests {
 
     #[test]
     fn fixed_window_ranks_and_pages_ignore_depth_and_page_size() {
-        let (results, hits): (Vec<_>, Vec<_>) =
-            (1..=1_001).map(|t| result(t, Some(0.5), None)).unzip();
+        let window = usize::try_from(HYBRID_CANDIDATE_WINDOW).expect("window fits usize");
+        let (results, hits): (Vec<_>, Vec<_>) = (1..=u128::from(HYBRID_CANDIDATE_WINDOW) + 1)
+            .map(|t| result(t, Some(0.5), None))
+            .unzip();
         let hits = hits.into_iter().map(|hit| (hit.t, hit)).collect();
         let mut req = request_with_tags();
         req.mode = SearchMode::Hybrid;
@@ -244,7 +252,10 @@ mod tests {
             let mut seen = Vec::new();
             loop {
                 let limit = if seen.len().is_multiple_of(2) { 7 } else { 13 };
-                assert_eq!(super::super::candidate_overfetch(&req, limit, 5_000), 1_000);
+                assert_eq!(
+                    super::super::candidate_overfetch(&req, limit, 5_000),
+                    HYBRID_CANDIDATE_WINDOW
+                );
                 assert_eq!(super::super::candidate_order(&req), SearchOrder::Relevance);
                 let mut fused = results.clone();
                 let bound = apply_hybrid_fusion(&req, &mut fused, &hits);
@@ -268,10 +279,10 @@ mod tests {
                     },
                 });
             }
-            assert_eq!(seen.len(), 1_000);
+            assert_eq!(seen.len(), window);
             assert_eq!(
                 seen.iter().collect::<std::collections::BTreeSet<_>>().len(),
-                1_000
+                window
             );
             assert!(!seen.contains(&MemoryId::new(uuid::Uuid::from_u128(1))));
         }
