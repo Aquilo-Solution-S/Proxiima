@@ -28,12 +28,29 @@ named here. This skill only puts them in order.
    yet, call `core_remember`. Judgment: store what a later session could not
    re-derive from the repository. Example: "the user retired agent-memory in
    favour of the Proxiima plugins", not "edited run.py".
-3. **Derive one Abstraction per conclusion.** For each conclusion from step 1,
-   call `core_derive` with kind `Abstraction`. As `source_handles`, pass the
-   Facts and Abstractions it rests on: those from step 2, and those from step
-   1 that the session read or wrote earlier. Judgment: one conclusion per
-   Abstraction, so a later session can cite or supersede each on its own.
-   Example: "the test fails only when run in parallel", not "the test failed
-   three times". The server accepts only Facts and Abstractions as origins
-   and refuses an Abstraction without any, so a conclusion with nothing under
-   it goes back to step 2.
+3. **Derive one Abstraction per conclusion, superseding contradicted ones.**
+   For each conclusion from step 1, first search with `core_search_memories`
+   (`kind: "Abstraction"`, `schema_id: "core/agent-derivation-v1"`,
+   `include_body: true`, `spaces: [<destination space>]`, and when advertised
+   `stores: [<current store>]`) for an earlier head on the same subject,
+   reading `proxiima://memory/{id}` if a body is truncated. Then take one of
+   three actions: if an existing Abstraction already states the same
+   conclusion, skip it; if new evidence contradicts, replaces, or implicitly
+   invalidates it — even without explicitly saying "we stopped doing X" —
+   revise it with `core_derive` (`kind: "Abstraction"`, same destination
+   `space`), passing its `memory` UUID as `supersedes` with a new
+   `idempotency_key` and stating both the current valid conclusion and the
+   earlier state or premise it replaces; otherwise, derive a new Abstraction
+   in the same destination `space`. In either write, pass the Facts and Abstractions the conclusion rests on as `source_handles`: those
+   from step 2, and those from step 1 that the session read or wrote earlier.
+   Judgment: one conclusion per Abstraction, so a later session can cite or
+   supersede each on its own. Why: raw Facts are immutable and still match
+   queries framed around an old premise; default heads-only search excludes
+   the superseded Abstraction, and naming the earlier premise in the
+   replacement helps queries framed around the old premise match and rank it.
+   Example: "the service now runs on Postgres 18 (supersedes Postgres 16;
+   Postgres 16 is retired)" with `supersedes` set to the Postgres 16
+   Abstraction's `memory` UUID, not a second standalone Abstraction beside it.
+   The server accepts only Facts and Abstractions as origins and refuses an
+   Abstraction without any, so a conclusion with nothing under it goes back to
+   step 2.
