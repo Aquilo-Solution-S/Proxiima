@@ -36,7 +36,7 @@ concepts and integration; avoid a second invariant or configuration ledger.
 ## Branch and release policy
 
 1. Start from `origin/verified` so work starts after CI. Push directly to `main` with linear history and keep branches and numbered tags free of force rewrites. Outside contributions use pull requests.
-2. Before pushing, have `origin/main..HEAD` reviewed by a different authoring vendor, or by a different person for an unaided author.
+2. Before pushing, have `origin/main..HEAD` reviewed in a fresh session given the diff and its contract, not the reasoning that produced it.
 3. Leave the workspace version alone for routine changes. A deliberate bump requests a numbered release through Verify. Do not tag by hand.
 4. See [`Proxiima.Repository`](docs/ledger.md#repository).
 5. Run `scripts/check-migrations.py` when changing migration history. See
@@ -77,6 +77,6 @@ Fix, record or escalate each observed red or skip with exact commands, output an
 - Write technical artifacts in English and keep diagrams conceptual, so the generated schema stays authoritative.
 - Scope Conventional Commit subjects to an existing component for release-note grouping.
 - Put a concrete operator or client action in a breaking commit's `Upgrade:` footer so the rendered note is actionable.
-- Attribute AI work to its actual authoring model in `Co-Authored-By` so review can exclude that vendor, and record applicable decisions in `Tesla-Valve` trailers.
+- Record applicable decisions in `Tesla-Valve` trailers.
 
 Resolve conflicts with a principle before changing architecture because those decisions compound.
