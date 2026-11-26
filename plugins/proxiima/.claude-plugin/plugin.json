@@ -1,0 +1,4 @@
+{
+  "name": "proxiima",
+  "description": "Skills for coding agents that keep their memory in Proxiima. Add the Proxiima MCP server with your CLI first."
+}

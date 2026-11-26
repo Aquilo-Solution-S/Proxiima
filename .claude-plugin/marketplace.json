@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "proxiima",
+  "description": "Proxiima plugins for Claude Code, Codex and Grok.",
+  "owner": {
+    "name": "Aquilo Solution.S GmbH",
+    "url": "https://github.com/Aquilo-Solution-S"
+  },
+  "plugins": [
+    {
+      "name": "proxiima",
+      "description": "Skills for coding agents that keep their memory in Proxiima. Add the Proxiima MCP server with your CLI first.",
+      "source": "./plugins/proxiima",
+      "category": "development"
+    }
+  ]
+}

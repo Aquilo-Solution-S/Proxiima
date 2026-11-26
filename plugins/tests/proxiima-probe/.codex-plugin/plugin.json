@@ -1,0 +1,6 @@
+{
+  "name": "proxiima-probe",
+  "version": "0.0.0",
+  "description": "Test fixture: records which lifecycle hooks fire and whether their output reaches the model.",
+  "hooks": "./hooks/hooks.json"
+}
