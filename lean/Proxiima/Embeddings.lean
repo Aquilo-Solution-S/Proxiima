@@ -203,26 +203,29 @@ def admitCall : ClientState → ProviderCall → Bool
   | .ready, .indexing | .ready, .query | .backingOff, .query => true
   | .backingOff, .indexing | .paused, .indexing | .paused, .query => false
 
-/-- The final provider outcome that the drain may receive. -/
+/-- The final outcome of a provider call that the drain may receive, or a call the backed-off client withheld. -/
 inductive ProviderResult where
   | success
   | inputRefused
   | transient
   | configuration
+  | withheld
   deriving DecidableEq
 
-/-- Actions following a provider result at the drain. -/
+/-- Actions following a provider result at the drain, for the claims its call was for. -/
 inductive DrainAction where
   | publish
   | rescue
+  | defer
   | release
   deriving DecidableEq
 
-/-- Publish successful vectors, rescue input refusals, and release on other failures. -/
+/-- Publish vectors, rescue input refusals, defer what the provider failed, and release what it never saw or cannot serve. -/
 def drainAction : ProviderResult → DrainAction
   | .success => .publish
   | .inputRefused => .rescue
-  | .transient | .configuration => .release
+  | .transient => .defer
+  | .configuration | .withheld => .release
 
 /-- Validation result from a managed client response. -/
 inductive VectorValidation where
@@ -291,9 +294,9 @@ def diagnosticClaimAge : JobState → Bool
   | .processing => true
   | .pending | .failed | .failedPermanent => false
 
-/-- Events on a token-fenced processing claim. -/
+/-- Events on a token-fenced processing claim; a deferral also queues the job behind the jobs queued before it. -/
 inductive ClaimEvent where
-  | renew | finish | retryableFailure | permanentFailure | release | expire
+  | renew | finish | retryableFailure | permanentFailure | release | defer | expire
   deriving DecidableEq
 
 /-- When its fence matches, a claim can renew, disappear, fail or return to pending. -/
@@ -302,7 +305,7 @@ def settleClaim : ClaimEvent → Option JobState
   | .finish => none
   | .retryableFailure => some .failed
   | .permanentFailure => some .failedPermanent
-  | .release | .expire => some .pending
+  | .release | .defer | .expire => some .pending
 
 /-- Whether a reconcile target already has a job. -/
 inductive ReconcileJob where
@@ -395,10 +398,30 @@ inductive FailureStatus where
   | http400 | http401 | http403 | http404 | http413 | http422 | other
   deriving DecidableEq
 
-/-- Classify the HTTP status independently of its body. -/
-def providerFailure : FailureStatus → ProviderResult
+/-- How a call reads a refusing status: as a provider result, or by one sentinel probe. -/
+inductive StatusReading where
+  | result (result : ProviderResult)
+  | probe
+  deriving DecidableEq
+
+/-- Classify the HTTP status independently of its body; an indexing call reads its HTTP 400 by a probe. -/
+def providerFailure : ProviderCall → FailureStatus → StatusReading
+  | .indexing, .http400 => .probe
+  | .query, .http400 | .indexing, .other | .query, .other => .result .transient
+  | .indexing, .http401 | .indexing, .http403 | .indexing, .http404
+  | .query, .http401 | .query, .http403 | .query, .http404 => .result .configuration
+  | .indexing, .http413 | .indexing, .http422
+  | .query, .http413 | .query, .http422 => .result .inputRefused
+
+/-- What a one-character sentinel input answered after an indexing call drew HTTP 400. -/
+inductive ProbeAnswer where
+  | vector | http400 | http401 | http403 | http404 | other
+  deriving DecidableEq
+
+/-- A sentinel that embeds proves an input refusal, a refused sentinel a configuration fault; anything else is transient. -/
+def badRequestProbe : ProbeAnswer → ProviderResult
+  | .vector => .inputRefused
   | .http400 | .http401 | .http403 | .http404 => .configuration
-  | .http413 | .http422 => .inputRefused
   | .other => .transient
 
 end Proxiima.Embeddings

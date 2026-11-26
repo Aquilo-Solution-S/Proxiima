@@ -5,9 +5,13 @@
 //!
 //! The surface is intentionally minimal. No retries; failures bubble up
 //! through typed input refusals (HTTP 413/422 or a local cap), configuration
-//! faults (HTTP 400/401/403/404), and retryable failures with optional HTTP
-//! status and Retry-After delay. Error-body diagnostics are bounded and best-effort;
-//! they never delay a known refusal. Client construction returns `LlmError::Internal`.
+//! faults (HTTP 401/403/404), and retryable failures with optional HTTP
+//! status and Retry-After delay. An indexing call reads its HTTP 400 by one
+//! sentinel probe: an input refusal when the sentinel embeds, a configuration
+//! fault when the sentinel draws 400/401/403/404 too, retryable otherwise. A
+//! search query's HTTP 400 is retryable. Error-body diagnostics are bounded
+//! and best-effort; they never delay a known refusal. Client construction
+//! returns `LlmError::Internal`.
 
 use std::time::Duration;
 

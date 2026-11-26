@@ -87,7 +87,8 @@ WITH page AS MATERIALIZED (
          DO UPDATE SET status = 'pending',
                        claimed_at = NULL,
                        claim_token = NULL,
-                       last_error = NULL
+                       last_error = NULL,
+                       retry_position = NULL
          WHERE embedding_jobs.status = 'failed'
      RETURNING 1
  )
@@ -110,7 +111,8 @@ pub fn reconcile_embeddings_sql_for_tests() -> &'static str {
 /// Scans metadata-eligible live Memory heads for the selected Owners and
 /// embedding space. The drain resolves text. A row that already holds a
 /// `failed` job (retryable cause, per `fail_embedding_job`) is requeued —
-/// status back to `pending`, `last_error` cleared — so reconcile is the
+/// status back to `pending` at its admission position, `last_error`
+/// cleared — so reconcile is the
 /// operator/startup reset that lifts a Fact out of the retry dead-end.
 /// `failed_permanent` jobs (`fail_embedding_job_permanently`) are NOT
 /// requeued: the provider will always reject the same input again.

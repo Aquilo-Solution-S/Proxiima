@@ -449,7 +449,6 @@ pub(super) fn assert_http_failure(
         return;
     }
     let configuration = match status {
-        400 => Some(EmbeddingConfigurationFault::BadRequest),
         401 => Some(EmbeddingConfigurationFault::Unauthorized),
         403 => Some(EmbeddingConfigurationFault::Forbidden),
         404 => Some(EmbeddingConfigurationFault::NotFound),
@@ -474,8 +473,10 @@ pub(super) fn assert_http_failure(
     assert_eq!(*actual_delay, retry_after);
 }
 
+/// What a status means is read without its body: `read_status` takes none,
+/// and the body only ever trails a retryable failure's message.
 #[test]
-fn status_policy_is_independent_of_error_body() {
+fn status_policy_matches_ledger_vectors() {
     let bodies = [
         "",
         "EOF",
@@ -491,28 +492,57 @@ fn status_policy_is_independent_of_error_body() {
         .as_array()
         .expect("provider failure vectors");
     for code in (100..200).chain(300..1_000) {
-        let case = format!("http{code}");
-        let kind = rows
-            .iter()
-            .find(|row| row["in"][0] == case)
-            .or_else(|| rows.iter().find(|row| row["in"][0] == "other"))
-            .expect("status vector")["out"]
-            .as_str()
-            .expect("provider outcome");
         let status = reqwest::StatusCode::from_u16(code).expect("valid HTTP status");
+        for (call, search) in [("indexing", false), ("query", true)] {
+            let row = |case: &str| {
+                rows.iter()
+                    .find(|row| row["in"][0] == call && row["in"][1] == case)
+            };
+            let expected = &row(&format!("http{code}"))
+                .or_else(|| row("other"))
+                .expect("status vector")["out"];
+            match super::read_status(status, retry_after, search) {
+                super::StatusReading::Probe => assert_eq!(expected, "probe", "{call} {code}"),
+                reading @ (super::StatusReading::Diagnose(_) | super::StatusReading::Failed(_)) => {
+                    assert_eq!(
+                        matches!(reading, super::StatusReading::Failed(_)),
+                        search && code == 400,
+                        "{call} {code}: only search HTTP 400 omits response-body diagnostics"
+                    );
+                    let (super::StatusReading::Diagnose(error)
+                    | super::StatusReading::Failed(error)) = reading
+                    else {
+                        unreachable!();
+                    };
+                    assert_http_failure(&error, code, retry_after);
+                    let kind = expected["result"][0].as_str().expect("provider outcome");
+                    assert!(
+                        match kind {
+                            "inputRefused" => matches!(error, LlmError::InputRefused(_)),
+                            "configuration" => matches!(error, LlmError::Configuration(_)),
+                            "transient" => matches!(error, LlmError::Retryable { .. }),
+                            other => panic!("unknown provider outcome {other}"),
+                        },
+                        "{call} {code}: {error:?}"
+                    );
+                }
+            }
+        }
         for body in bodies {
             let error = super::embed_http_error(status, retry_after, body);
             assert_http_failure(&error, code, retry_after);
-            assert!(match kind {
-                "inputRefused" => matches!(error, LlmError::InputRefused(_)),
-                "configuration" => matches!(error, LlmError::Configuration(_)),
-                "transient" => matches!(error, LlmError::Retryable { .. }),
-                other => panic!("unknown provider outcome {other}"),
-            });
             if let LlmError::Retryable { message, .. } = error {
                 assert!(message.ends_with(body));
             }
         }
+    }
+}
+
+#[test]
+fn a_sentinel_is_one_character_and_never_the_refused_input() {
+    assert_eq!(super::sentinel(&["a"]), "b");
+    for inputs in [&["b"][..], &["a", "a"], &["text"], &["aa"]] {
+        assert_eq!(super::sentinel(inputs), "a", "{inputs:?}");
     }
 }
 

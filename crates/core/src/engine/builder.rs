@@ -184,6 +184,10 @@ mod tests {
             std::future::pending().await
         }
 
+        fn batches_requests(&self) -> bool {
+            true
+        }
+
         fn model_id(&self) -> &'static str {
             "hanging-custom"
         }

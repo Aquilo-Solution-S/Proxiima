@@ -623,4 +623,7 @@ pub struct EmbeddingJobClaim {
     pub entity_id: MemoryId,
     pub space: crate::EmbeddingSpace,
     pub claim_token: Uuid,
+    /// An earlier drain sent this job and the provider failed it, so the
+    /// drain sends it alone: it cannot fail a batch of other jobs again.
+    pub deferred: bool,
 }

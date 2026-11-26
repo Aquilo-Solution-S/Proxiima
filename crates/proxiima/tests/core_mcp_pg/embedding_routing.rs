@@ -1674,6 +1674,10 @@ impl proxiima_core::embedding::EmbeddingClient for RetryRouteEmbedding {
         })
     }
 
+    fn batches_requests(&self) -> bool {
+        true
+    }
+
     fn model_id(&self) -> &'static str {
         "route-retry"
     }
@@ -1897,6 +1901,10 @@ impl proxiima_core::embedding::EmbeddingClient for RecoveringRetryEmbedding {
         Ok(texts.iter().map(|_| Self::vector()).collect())
     }
 
+    fn batches_requests(&self) -> bool {
+        true
+    }
+
     fn model_id(&self) -> &'static str {
         "route-retry"
     }
@@ -1973,10 +1981,12 @@ async fn retryable_jobs_complete_after_the_same_clients_window_passes() {
             Ok::<(), Box<dyn std::error::Error>>(())
         })
         .await??;
+        // The failed batch deferred its jobs, and the drain sends a deferred
+        // job alone (`EmbeddingJobClaim::deferred`).
         assert_eq!(
             client.calls(),
-            (2, 0),
-            "the same client succeeds on its second batch"
+            (1, 2),
+            "the same client embeds each deferred job once its window passes"
         );
         let route = engine.embedding_route(&fixture.personal).await?;
         assert!(
@@ -2023,6 +2033,10 @@ impl proxiima_core::embedding::EmbeddingClient for ConcurrentBatchesEmbedding {
             .iter()
             .map(|_| vec![1.0; proxiima_core::embedding::EmbeddingDim::D1024.width()])
             .collect())
+    }
+
+    fn batches_requests(&self) -> bool {
+        true
     }
 
     fn model_id(&self) -> &'static str {

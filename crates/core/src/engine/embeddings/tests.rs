@@ -1,5 +1,5 @@
 use super::{
-    DrainAction, EmbeddingConfigurationFault, EmbeddingInputRefusal, LlmError, drain_action,
+    DrainAction, EmbeddingConfigurationFault, EmbeddingInputRefusal, LlmError, Stop, drain_action,
 };
 
 #[test]
@@ -18,14 +18,19 @@ fn drain_actions_match_ledger_vectors() {
             )),
             "transient" => Err(LlmError::retryable("provider unavailable")),
             "configuration" => Err(LlmError::Configuration(
-                EmbeddingConfigurationFault::BadRequest,
+                EmbeddingConfigurationFault::Unauthorized,
             )),
+            "withheld" => Err(LlmError::BackedOff {
+                status: Some(503),
+                retry_after: std::time::Duration::from_secs(5),
+            }),
             unknown => panic!("unknown provider result: {unknown}"),
         };
         let action = match drain_action(result) {
             DrainAction::Publish(_) => "publish",
             DrainAction::Rescue(_) => "rescue",
-            DrainAction::Release(_) => "release",
+            DrainAction::Stop(Stop::Defer(_)) => "defer",
+            DrainAction::Stop(Stop::Release(_)) => "release",
         };
         assert_eq!(row["out"], action, "{row}");
     }

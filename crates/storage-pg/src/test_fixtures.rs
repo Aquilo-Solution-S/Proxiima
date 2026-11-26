@@ -103,10 +103,10 @@ pub async fn ensure_core_template(vectors: VectorStorage) -> Result<String, sqlx
 /// Turn a store freshly installed from this tree into one at the previous
 /// head, the shape [`crate::run_core_migrations`] adopts: the column the
 /// baseline dropped and the type a later migration dropped are back, the
-/// new confidence constraint is absent, and the ledger is the previous
-/// head's, with its pgvector row when
-/// `vectors` is [`VectorStorage::Local`]. `pool` connects as the store's
-/// migration role.
+/// post-baseline confidence constraint and `embedding_jobs.retry_position`
+/// column/index changes are absent, and the ledger is the previous head's,
+/// with its pgvector row when `vectors` is [`VectorStorage::Local`]. `pool`
+/// connects as the store's migration role.
 ///
 /// # Errors
 ///
@@ -131,6 +131,23 @@ pub async fn stage_previous_head(
     sqlx::query(
         "ALTER TABLE proxiima_core.interpretation_v1
              DROP CONSTRAINT interpretation_v1_confidence_chk",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DROP INDEX proxiima_core.embedding_jobs_pending_claim_idx")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE proxiima_core.embedding_jobs
+             DROP COLUMN retry_position",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX embedding_jobs_pending_claim_idx
+             ON proxiima_core.embedding_jobs
+             USING btree (job_id)
+             WHERE (status = 'pending'::proxiima_core.embedding_job_status)",
     )
     .execute(&mut *transaction)
     .await?;

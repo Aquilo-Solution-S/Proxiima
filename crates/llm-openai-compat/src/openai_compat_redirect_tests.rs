@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use proxiima_core::PlaintextHosts;
-use proxiima_core::embedding::{EmbeddingClient, LlmError};
+use proxiima_core::embedding::{
+    EmbeddingClient, EmbeddingConfigurationFault, EmbeddingInputRefusal, LlmError,
+};
 use proxiima_core::models::EmbedCaps;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -516,7 +518,13 @@ async fn http_failures_keep_status_and_retry_after_when_diagnostics_fail() {
                 OpenAiCompatConfig::new(format!("http://{addr}/v1"), None),
             )
             .expect("loopback embedding endpoint");
-            let error = client.embed("test text").await.expect_err("HTTP refusal");
+            // An indexing call answers HTTP 400 with a probe; a query reads it alone.
+            let error = if status == 400 {
+                client.embed_query("test text").await
+            } else {
+                client.embed("test text").await
+            }
+            .expect_err("HTTP refusal");
             task.complete().await;
             super::tests::assert_http_failure(&error, status, Some(Duration::from_mins(2)));
             if let LlmError::Retryable { message, .. } = error {
@@ -732,4 +740,444 @@ async fn redirect_loops_are_refused_without_hops() {
     );
     assert_eq!(server.requests.load(Ordering::SeqCst), 1);
     assert_eq!(server.target_requests.load(Ordering::SeqCst), 0);
+}
+
+/// Answers one connection per response, in order, and hands each request over.
+async fn spawn_exchanges(
+    responses: Vec<String>,
+) -> (
+    SocketAddr,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+    ResponseTask,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind server");
+    let addr = listener.local_addr().expect("server address");
+    let (captured, requests) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        tokio::time::timeout(PATIENCE, async {
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.expect("accept request");
+                captured
+                    .send(read_request(&mut stream).await)
+                    .expect("the test holds the receiver");
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        })
+        .await
+        .expect("exchanges finish before deadline");
+    });
+    (addr, requests, ResponseTask(task))
+}
+
+fn http(status: u16, headers: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status} Response\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+const ONE_VECTOR: &str = r#"{"data":[{"index":0,"embedding":[1.0,0.0]}]}"#;
+
+fn bad_request() -> String {
+    http(
+        400,
+        "",
+        r#"{"error":{"message":"maximum context length exceeded"}}"#,
+    )
+}
+
+fn probing_client(addr: SocketAddr) -> OpenAiCompatEmbeddingClient {
+    OpenAiCompatEmbeddingClient::new(
+        "test-embed",
+        EmbedCaps::new(2, true),
+        OpenAiCompatConfig::new(format!("http://{addr}/v1"), Some("test-token".into())),
+    )
+    .expect("loopback embedding endpoint")
+}
+
+fn sent_body(request: &str) -> serde_json::Value {
+    let (_, body) = request.split_once("\r\n\r\n").expect("HTTP request");
+    serde_json::from_str(body).expect("JSON request body")
+}
+
+/// An indexing call's HTTP 400 resends nothing of the refused input: the
+/// probe is one sentinel through the same endpoint, credentials, model and
+/// width, and its vector proves the input was refused.
+#[tokio::test]
+async fn an_indexing_bad_request_is_the_inputs_when_a_sentinel_embeds() {
+    let (addr, mut requests, task) =
+        spawn_exchanges(vec![bad_request(), http(200, "", ONE_VECTOR)]).await;
+    let error = probing_client(addr)
+        .embed_many(&["first memory".to_owned(), "second memory".to_owned()])
+        .await
+        .expect_err("refused input");
+    task.complete().await;
+    assert!(
+        matches!(
+            error,
+            LlmError::InputRefused(EmbeddingInputRefusal::BadRequest)
+        ),
+        "{error:?}"
+    );
+    let primary = requests.try_recv().expect("the input's request");
+    let probe = requests.try_recv().expect("the probe");
+    assert_eq!(
+        sent_body(&primary)["input"],
+        serde_json::json!(["first memory", "second memory"])
+    );
+    assert_eq!(sent_body(&probe)["input"], serde_json::json!(["a"]));
+    for request in [&primary, &probe] {
+        assert!(request.starts_with("POST /v1/embeddings "), "{request}");
+        assert!(
+            request
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case("authorization: Bearer test-token")),
+            "{request}"
+        );
+        let body = sent_body(request);
+        assert_eq!(body["model"], "test-embed");
+        assert_eq!(body["dimensions"], 2);
+    }
+}
+
+#[tokio::test]
+async fn a_refused_input_that_is_the_sentinel_is_probed_with_another() {
+    let (addr, mut requests, task) =
+        spawn_exchanges(vec![bad_request(), http(200, "", ONE_VECTOR)]).await;
+    let error = probing_client(addr)
+        .embed("a")
+        .await
+        .expect_err("refused input");
+    task.complete().await;
+    assert!(
+        matches!(
+            error,
+            LlmError::InputRefused(EmbeddingInputRefusal::BadRequest)
+        ),
+        "{error:?}"
+    );
+    requests.try_recv().expect("the input's request");
+    let probe = requests.try_recv().expect("the probe");
+    assert_eq!(sent_body(&probe)["input"], serde_json::json!(["b"]));
+}
+
+/// `Proxiima.Embeddings.badRequestProbe`, answered by a real exchange.
+#[tokio::test]
+async fn bad_request_probe_matches_ledger_vectors() {
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/tests/ledger_vectors.json"))
+            .expect("parse ledger vectors");
+    for row in vectors["Proxiima.Embeddings.badRequestProbe"]
+        .as_array()
+        .expect("probe vectors")
+    {
+        let answer = match row["in"][0].as_str().expect("probe answer") {
+            "vector" => http(200, "", ONE_VECTOR),
+            "http400" => http(400, "", ""),
+            "http401" => http(401, "", ""),
+            "http403" => http(403, "", ""),
+            "http404" => http(404, "", ""),
+            "other" => http(503, "", ""),
+            unknown => panic!("unknown probe answer {unknown}"),
+        };
+        let (addr, _requests, task) = spawn_exchanges(vec![bad_request(), answer]).await;
+        let error = probing_client(addr)
+            .embed("too long for the model")
+            .await
+            .expect_err("refused input");
+        task.complete().await;
+        let result = match error {
+            LlmError::InputRefused(EmbeddingInputRefusal::BadRequest) => "inputRefused",
+            LlmError::Configuration(_) => "configuration",
+            LlmError::Retryable { .. } => "transient",
+            other => panic!("unexpected probe reading {other:?}"),
+        };
+        assert_eq!(row["out"], result, "{row}");
+    }
+}
+
+/// A sentinel the provider refuses as a request names the configuration
+/// fault: both the input and a one-character input were refused.
+#[tokio::test]
+async fn a_refused_sentinel_names_the_configuration_fault() {
+    for (status, fault) in [
+        (400, EmbeddingConfigurationFault::BadRequest),
+        (401, EmbeddingConfigurationFault::Unauthorized),
+        (403, EmbeddingConfigurationFault::Forbidden),
+        (404, EmbeddingConfigurationFault::NotFound),
+    ] {
+        let (addr, _requests, task) =
+            spawn_exchanges(vec![bad_request(), http(status, "", "")]).await;
+        let error = probing_client(addr)
+            .embed("text")
+            .await
+            .expect_err("refused request");
+        task.complete().await;
+        assert!(
+            matches!(error, LlmError::Configuration(actual) if actual == fault),
+            "probe {status}: {error:?}"
+        );
+    }
+}
+
+/// A probe that proves nothing keeps the work retryable with the provider's
+/// own status and Retry-After: neither a pause nor a terminal refusal.
+#[tokio::test]
+async fn an_inconclusive_probe_is_retryable_with_its_status_and_retry_after() {
+    for (answer, status, retry_after) in [
+        (
+            http(429, "Retry-After: 30\r\n", ""),
+            Some(429),
+            Some(Duration::from_secs(30)),
+        ),
+        (
+            http(503, "Retry-After: 120\r\n", "overloaded"),
+            Some(503),
+            Some(Duration::from_mins(2)),
+        ),
+        (http(422, "", ""), Some(422), None),
+        (http(413, "", ""), Some(413), None),
+        (
+            http(307, "Location: http://redirect.example/\r\n", ""),
+            Some(307),
+            None,
+        ),
+        (http(200, "", "{"), Some(200), None),
+        (
+            http(200, "Retry-After: 120\r\n", "{"),
+            Some(200),
+            Some(Duration::from_mins(2)),
+        ),
+        (
+            http(200, "", r#"{"data":[{"embedding":[1.0]}]}"#),
+            Some(200),
+            None,
+        ),
+        (
+            http(
+                200,
+                "Retry-After: 120\r\n",
+                r#"{"data":[{"embedding":[1.0]}]}"#,
+            ),
+            Some(200),
+            Some(Duration::from_mins(2)),
+        ),
+    ] {
+        let (addr, _requests, task) = spawn_exchanges(vec![bad_request(), answer.clone()]).await;
+        let error = probing_client(addr)
+            .embed("text")
+            .await
+            .expect_err("unproven refusal");
+        task.complete().await;
+        assert!(
+            matches!(
+                error,
+                LlmError::Retryable { status: actual, retry_after: delay, .. }
+                    if actual == status && delay == retry_after
+            ),
+            "{answer}: {error:?}"
+        );
+    }
+    // The server answers the input only and closes its listener.
+    let (addr, _requests, task) = spawn_exchanges(vec![bad_request()]).await;
+    let error = probing_client(addr)
+        .embed("text")
+        .await
+        .expect_err("probe cannot be sent");
+    task.complete().await;
+    assert!(
+        matches!(error, LlmError::Retryable { status: None, .. }),
+        "{error:?}"
+    );
+}
+
+/// A search query has nothing to rescue, so its HTTP 400 goes back to the
+/// search as retryable without a second request and without echoing provider
+/// response text (which may repeat rejected query terms) into operator logs.
+#[tokio::test]
+async fn a_query_bad_request_is_retryable_without_a_probe() {
+    let (addr, mut requests, task) = spawn_exchanges(vec![http(
+        400,
+        "Retry-After: 7\r\n",
+        "invalid input: private search phrase",
+    )])
+    .await;
+    let error = probing_client(addr)
+        .embed_query("private search phrase")
+        .await
+        .expect_err("refused query");
+    task.complete().await;
+    assert!(
+        matches!(
+            error,
+            LlmError::Retryable {
+                status: Some(400),
+                retry_after: Some(delay),
+                ref message,
+            } if delay == Duration::from_secs(7) && !message.contains("private search phrase")
+        ),
+        "{error:?}"
+    );
+    requests.try_recv().expect("the query's request");
+    assert!(requests.try_recv().is_err(), "no probe followed the query");
+}
+
+/// When the host configures the adapter and Engine with the same request
+/// timeout, a probe that sends `200` headers with `Retry-After` and then
+/// stalls its body still returns its HTTP status and `Retry-After` before
+/// `ClientControl` cancels it, so the controlled client honors the provider's
+/// backoff hint instead of falling back to the default worker interval.
+#[tokio::test]
+async fn a_stalled_probe_body_preserves_http_metadata_through_controlled_client() {
+    let timeout = Duration::from_secs(1);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind server");
+    let addr = listener.local_addr().expect("server address");
+    let _server = ResponseTask(tokio::spawn(async move {
+        let (mut primary, _) = listener.accept().await.expect("accept request");
+        let _ = read_request(&mut primary).await;
+        let _ = primary.write_all(bad_request().as_bytes()).await;
+        let (mut probe, _) = listener.accept().await.expect("accept probe");
+        let _ = read_request(&mut probe).await;
+        let _ = probe
+            .write_all(
+                b"HTTP/1.1 200 OK\r\n\
+                  Content-Type: application/json\r\n\
+                  Retry-After: 120\r\n\
+                  Content-Length: 64\r\n\
+                  \r\n",
+            )
+            .await;
+        std::future::pending::<()>().await;
+    }));
+    let policy = proxiima_core::embedding::EmbeddingRuntimePolicy::new(
+        timeout,
+        2,
+        Duration::from_secs(1),
+        Duration::from_secs(3),
+    )
+    .expect("valid policy");
+    let client = OpenAiCompatEmbeddingClient::new(
+        "test-embed",
+        EmbedCaps::new(384, false),
+        OpenAiCompatConfig::new(format!("http://{addr}/v1"), None)
+            .with_timeout(policy.request_timeout()),
+    )
+    .expect("loopback embedding endpoint");
+    let engine = proxiima_core::Engine::new_or_panic_for_tests(
+        proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests(),
+        proxiima_core::StoragePorts::rejecting_for_tests(),
+    )
+    .with_embedding_runtime_policy(policy)
+    .with_embedding_router(Arc::new(
+        proxiima_core::embedding::SingleClientRouter::bind(Arc::new(client))
+            .expect("supported lane"),
+    ));
+    let owner: proxiima_core::OwnerId = "01950000-0000-7000-8000-000000000001"
+        .parse()
+        .expect("valid owner id");
+    let route = engine.embedding_route(&owner).await.expect("route");
+    let controlled = route.current_client().expect("client");
+
+    let error = controlled
+        .embed("text")
+        .await
+        .expect_err("stalled probe body");
+    assert!(
+        matches!(
+            error,
+            LlmError::Retryable {
+                status: Some(200),
+                retry_after: Some(delay),
+                ..
+            } if delay == Duration::from_mins(2)
+        ),
+        "controlled client must observe probe HTTP status and Retry-After: {error:?}"
+    );
+    let follow_up = controlled
+        .embed("other")
+        .await
+        .expect_err("backed off from probe Retry-After");
+    assert!(
+        matches!(
+            follow_up,
+            LlmError::BackedOff {
+                retry_after: remaining,
+                ..
+            } if remaining > Duration::from_secs(60)
+        ),
+        "controlled client must back off using probe Retry-After, not worker_interval: {follow_up:?}"
+    );
+}
+
+/// The probe spends what is left of the call's timeout. Measured in real
+/// time because the timeout is reqwest's: the input's answer takes three
+/// quarters of it and the probe gets no answer.
+#[tokio::test]
+async fn the_probe_spends_only_what_is_left_of_the_call_timeout() {
+    let timeout = Duration::from_secs(2);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind server");
+    let addr = listener.local_addr().expect("server address");
+    let _server = ResponseTask(tokio::spawn(async move {
+        let (mut primary, _) = listener.accept().await.expect("accept request");
+        let _ = read_request(&mut primary).await;
+        tokio::time::sleep(timeout * 3 / 4).await;
+        let _ = primary.write_all(bad_request().as_bytes()).await;
+        let (mut probe, _) = listener.accept().await.expect("accept probe");
+        let _ = read_request(&mut probe).await;
+        std::future::pending::<()>().await;
+    }));
+    let client = OpenAiCompatEmbeddingClient::new(
+        "test-embed",
+        EmbedCaps::new(2, false),
+        OpenAiCompatConfig::new(format!("http://{addr}/v1"), None).with_timeout(timeout),
+    )
+    .expect("loopback embedding endpoint");
+    let started = std::time::Instant::now();
+    let error = client.embed("text").await.expect_err("unanswered probe");
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(error, LlmError::Retryable { status: None, .. }),
+        "{error:?}"
+    );
+    assert!(
+        elapsed < timeout + timeout / 2,
+        "the probe waited past the call's timeout: {elapsed:?}"
+    );
+}
+
+/// A timeout too large to add to `Instant::now()` (such as `Duration::MAX`)
+/// must not panic during an embedding call or its HTTP 400 sentinel probe.
+#[tokio::test]
+async fn an_unrepresentable_timeout_does_not_panic() {
+    let (addr, _requests, task) = spawn_exchanges(vec![
+        http(200, "", r#"{"data":[{"embedding":[1.0,2.0]}]}"#),
+        bad_request(),
+        http(200, "", r#"{"data":[{"embedding":[1.0,2.0]}]}"#),
+    ])
+    .await;
+    let client = OpenAiCompatEmbeddingClient::new(
+        "test-embed",
+        EmbedCaps::new(2, false),
+        OpenAiCompatConfig::new(format!("http://{addr}/v1"), None).with_timeout(Duration::MAX),
+    )
+    .expect("client with Duration::MAX timeout");
+
+    let vector = client
+        .embed("ok")
+        .await
+        .expect("direct embed succeeds without deadline overflow");
+    assert_eq!(vector, vec![1.0, 2.0]);
+
+    let error = client
+        .embed("too long")
+        .await
+        .expect_err("probed 400 returns input refusal without deadline overflow");
+    task.complete().await;
+    assert!(
+        matches!(
+            error,
+            LlmError::InputRefused(EmbeddingInputRefusal::BadRequest)
+        ),
+        "{error:?}"
+    );
 }

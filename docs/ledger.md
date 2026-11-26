@@ -1827,17 +1827,19 @@ stateDiagram-v2
 - backingOff
 - paused
 
-**Provider result**: The final provider outcome that the drain may receive.
+**Provider result**: The final outcome of a provider call that the drain may receive, or a call the backed-off client withheld.
 
 - success
 - inputRefused
 - transient
 - configuration
+- withheld
 
-**Drain action**: Actions following a provider result at the drain.
+**Drain action**: Actions following a provider result at the drain, for the claims its call was for.
 
 - publish
 - rescue
+- defer
 - release
 
 **Vector validation**: Validation result from a managed client response.
@@ -1876,13 +1878,14 @@ stateDiagram-v2
 - queued
 - failed
 
-**Claim event**: Events on a token-fenced processing claim.
+**Claim event**: Events on a token-fenced processing claim; a deferral also queues the job behind the jobs queued before it.
 
 - renew
 - finish
 - retryableFailure
 - permanentFailure
 - release
+- defer
 - expire
 
 **Reconcile job**: Whether a reconcile target already has a job.
@@ -1948,6 +1951,20 @@ stateDiagram-v2
 - http404
 - http413
 - http422
+- other
+
+**Status reading**: How a call reads a refusing status: as a provider result, or by one sentinel probe.
+
+- result
+- probe
+
+**Probe answer**: What a one-character sentinel input answered after an indexing call drew HTTP 400.
+
+- vector
+- http400
+- http401
+- http403
+- http404
 - other
 
 **request seconds** = 120: Request timeout in seconds when the host leaves it unset.
@@ -2117,10 +2134,11 @@ stateDiagram-v2
 | --- | --- |
 | success | publish |
 | inputRefused | rescue |
-| transient | release |
+| transient | defer |
 | configuration | release |
+| withheld | release |
 
-- drain action: Publish successful vectors, rescue input refusals, and release on other failures.
+- drain action: Publish vectors, rescue input refusals, defer what the provider failed, and release what it never saw or cannot serve.
 
 | width matches | finite | validate vector |
 | --- | --- | --- |
@@ -2177,6 +2195,7 @@ stateDiagram-v2
 | retryableFailure | failed |
 | permanentFailure | failedPermanent |
 | release | pending |
+| defer | pending |
 | expire | pending |
 
 - settle claim: When its fence matches, a claim can renew, disappear, fail or return to pending.
@@ -2208,17 +2227,35 @@ stateDiagram-v2
 
 - purge job: Purge removes only unrouted residue and leaves processing jobs to settle.
 
-| failure status | provider failure |
+| provider call | failure status | provider failure |
+| --- | --- | --- |
+| indexing | http400 | probe |
+| indexing | http401 | result (configuration) |
+| indexing | http403 | result (configuration) |
+| indexing | http404 | result (configuration) |
+| indexing | http413 | result (inputRefused) |
+| indexing | http422 | result (inputRefused) |
+| indexing | other | result (transient) |
+| query | http400 | result (transient) |
+| query | http401 | result (configuration) |
+| query | http403 | result (configuration) |
+| query | http404 | result (configuration) |
+| query | http413 | result (inputRefused) |
+| query | http422 | result (inputRefused) |
+| query | other | result (transient) |
+
+- provider failure: Classify the HTTP status independently of its body; an indexing call reads its HTTP 400 by a probe.
+
+| probe answer | bad request probe |
 | --- | --- |
+| vector | inputRefused |
 | http400 | configuration |
 | http401 | configuration |
 | http403 | configuration |
 | http404 | configuration |
-| http413 | inputRefused |
-| http422 | inputRefused |
 | other | transient |
 
-- provider failure: Classify the HTTP status independently of its body.
+- bad request probe: A sentinel that embeds proves an input refusal, a refused sentinel a configuration fault; anything else is transient.
 
 ## Erasure and export
 

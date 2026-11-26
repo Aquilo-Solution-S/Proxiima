@@ -18,12 +18,14 @@ async-trait = { workspace = true }
 reqwest = { workspace = true, features = ["http2"] }
 httpdate = { workspace = true }
 futures = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 # The input cap's whole claim is that an over-limit input is refused
 # *without a request being made*, which can only be shown by pointing a real
 # client at an endpoint that would fail if it were reached.
-tokio = { workspace = true }
+proxiima-core = { path = "../core", features = ["testkit"] }
+tokio = { workspace = true, features = ["net", "io-util"] }
 
 [lints]
 workspace = true
