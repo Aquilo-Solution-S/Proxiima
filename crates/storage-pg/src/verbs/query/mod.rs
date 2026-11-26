@@ -43,14 +43,14 @@ pub(crate) use memories::query_memories_on_connection;
 pub use memories::{memory_page_sql_for_tests, memory_page_sql_for_tests_with_schemas};
 pub(crate) use search::search_memories_on_connection;
 pub(crate) use search::{
-    RankedCandidates, SubstringCandidates, projection_ranked_candidates,
-    projection_substring_candidates,
+    LexicalCandidates, RankedCandidates, StagedCandidates, SubstringCandidates,
+    projection_ranked_candidates, projection_substring_candidates,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use search::{
     ranked_candidate_sql_for_tests, ranked_projection_sql_for_tests, search_admit_sql_for_tests,
-    semantic_candidate_admission_sql_for_tests, substring_candidate_sql_for_tests,
-    substring_sql_for_tests,
+    semantic_candidate_admission_sql_for_tests, staged_candidate_sql_for_tests,
+    substring_candidate_sql_for_tests, substring_sql_for_tests,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use series_handle::explain_owned_head_handle_for_tests;

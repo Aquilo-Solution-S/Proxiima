@@ -1,15 +1,17 @@
 //! `core_search_memories` — projection-first content search.
 //!
-//! **ONE ranked statement per participating spiice.** Not one per schema:
+//! **ONE ranked call per participating spiice.** Not one per schema:
 //! the projection row is keyed `(memory_id, schema_id)` and carries the
 //! vector, the tags and the language, so the whole of a spiice's lexical
-//! surface is one composite-index scan with `schema_id` as a row predicate.
+//! surface is a composite-index scan with `schema_id` as a row predicate.
 //!
-//! 1. **ranked** — one statement over `<spiice>.projection`. The owner is
+//! 1. **ranked** — one call over `<spiice>.projection`. The owner is
 //!    an Index Cond on the composite `gin(owner_id, search_tsv)`,
 //!    `schema_id = ANY(..)` narrows to the participating schemas, the score
 //!    windows come from the spiice's DECLARATION, and the candidate budget
-//!    is the spiice's declared `overfetch_k`.
+//!    is the spiice's declared `overfetch_k`. Where the bands rank every
+//!    exact match above every rescue match, the call reads rescue matches
+//!    only for the window the exact matches leave ([`LexicalCandidates`]).
 //! 2. **substring** — at most ONE more statement, over exactly the schemas
 //!    the ranked arm returned nothing for, and only where the schema
 //!    declares an arm. `SubstringArm::Off` contributes no statement and no
@@ -606,7 +608,7 @@ fn statement_bound(fetched: usize, budget: u32) -> CandidateBound {
 
 /// One job per participating SPIICE, not one per schema.
 ///
-/// A spiice's ranked arm is one statement against its own shard, plus at
+/// A spiice's ranked arm is one call against its own shard, plus at
 /// most one substring statement over the schemas that arm returned nothing
 /// for. A request that reaches a second spiice runs the same
 /// again against that spiice's shard.
@@ -999,9 +1001,15 @@ fn ranked_projection_sql(
             .push(tag_operator(req.tag_match))
             .push(" $3::text[]");
     }
+    let rows = if rescue {
+        RankedRows::Both
+    } else {
+        RankedRows::Exact
+    };
     ranked_projection_sql_parts(
         spiice,
-        rescue,
+        QuerySide::Analyzed,
+        rows,
         &tag_pred,
         &admit_side_restriction(req, RANKED_MEMORY_ID)?,
         None,
@@ -1032,13 +1040,102 @@ impl RankedCandidates {
     }
 }
 
+/// The statements of a spiice's migrated lexical candidate function.
+///
+/// When every exact score renders above every rescue score
+/// ([`bands_are_disjoint`]), relevance order puts each exact match before
+/// each rescue match. The function then returns the exact matches first and
+/// asks for rescue matches only to fill the window they leave: the single
+/// pass's rows, in its order. Bands that overlap interleave the two kinds,
+/// and only one statement over both ranks them.
+pub(crate) enum LexicalCandidates {
+    /// One statement analyzes the query and ranks both kinds of match.
+    SinglePass(RankedCandidates),
+    /// The function analyzes the query once and runs the stages it needs.
+    Staged(StagedCandidates),
+}
+
+/// The stages of a spiice whose exact band renders above its rescue band.
+///
+/// Each reads the query its function analyzed once: `$1` is the analyzed
+/// text, `$13` the exact tsquery and `$14` the rescue tsquery.
+pub(crate) struct StagedCandidates {
+    multilingual: bool,
+    /// The rows the exact query matches.
+    pub(crate) exact: RankedCandidates,
+    /// The rows the rescue query matches and the exact one does not.
+    pub(crate) rescue: RankedCandidates,
+    /// The rows either query matches, for recency order, which interleaves
+    /// the two kinds.
+    pub(crate) merged: RankedCandidates,
+}
+
+impl StagedCandidates {
+    /// The text the tsqueries are built from, from the raw query `raw`.
+    pub(crate) fn analyzed_sql(&self, raw: &'static str) -> SqlText {
+        analyzed_query_sql(self.multilingual, raw)
+    }
+
+    /// The exact tsquery of the analyzed text `text`.
+    pub(crate) fn exact_tsquery_sql(&self, text: &'static str) -> SqlText {
+        tsquery_sql(self.multilingual, EXACT_TSQUERY, text)
+    }
+
+    /// The rescue tsquery of the analyzed text `text`.
+    pub(crate) fn rescue_tsquery_sql(&self, text: &'static str) -> SqlText {
+        tsquery_sql(self.multilingual, RESCUE_TSQUERY, text)
+    }
+}
+
+/// Which of a query's matches a ranked statement selects.
+#[derive(Clone, Copy)]
+enum RankedRows {
+    /// The rows the exact query matches, at their exact score.
+    Exact,
+    /// The rows the rescue query matches and the exact one does not, at
+    /// their rescue score.
+    RescueOnly,
+    /// The rows either query matches, at the higher of their two scores.
+    Both,
+}
+
+/// Where a ranked statement reads its query from.
+#[derive(Clone, Copy)]
+enum QuerySide {
+    /// The statement analyzes the raw query `$1` itself, in its `q` CTE.
+    Analyzed,
+    /// The function analyzed it before the statement: `$1` is the analyzed
+    /// text, `$13` the exact tsquery and `$14` the rescue tsquery.
+    Bound,
+}
+
+impl QuerySide {
+    /// What precedes the `SELECT`, and what follows the projection's alias
+    /// in its `FROM`.
+    fn prelude(self, multilingual: bool) -> (SqlText, &'static str) {
+        match self {
+            Self::Analyzed => (query_side_cte(multilingual), " p, q"),
+            Self::Bound => (SqlText::new(""), " p"),
+        }
+    }
+
+    /// The analyzed text, the exact tsquery and the rescue tsquery.
+    fn operands(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Analyzed => ("q.analyzed", "q.tsq", "q.any_tsq"),
+            Self::Bound => ("$1", "$13::tsquery", "$14::tsquery"),
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "the statement text is the length of the function"
 )]
 fn ranked_projection_sql_parts(
     spiice: &SpiiceScan<'_>,
-    rescue: bool,
+    side: QuerySide,
+    rows: RankedRows,
     tag_pred: &SqlText,
     admit_pred: &SqlText,
     rescue_switch: Option<&'static str>,
@@ -1046,12 +1143,19 @@ fn ranked_projection_sql_parts(
     let head = spiice.head();
     let table = PgIdent::table(&head.projection_table)?;
     let tsv = "p.search_tsv";
-    let mut rescue_guard = SqlText::new("");
-    if let Some(flag) = rescue_switch {
-        rescue_guard.push(flag).push(" AND ");
-    }
     let multilingual = multilingual(head);
-    let rank_tsq = rank_tsquery_expr(multilingual);
+    let (mut body, from) = side.prelude(multilingual);
+    let (text, exact_tsq, rescue_tsq) = side.operands();
+    // A per-row surface ranks each row against the query analyzed in the
+    // row's own configuration.
+    let rank_tsq = if multilingual {
+        SqlText::fill(
+            "websearch_to_tsquery(p.lexical_language, {text})",
+            &[("{text}", &SqlText::new(text))],
+        )
+    } else {
+        SqlText::new(exact_tsq)
+    };
     let weights = rank_weight_array(head)?;
     // The score windows and the `ts_rank` normalization flags are READ OFF
     // the declaration, resolved by name. Raw `ts_rank` is not comparable
@@ -1060,86 +1164,98 @@ fn ranked_projection_sql_parts(
     // two renderers can fill differently while claiming the same number.
     let exact = spiice.bands.exact;
     let rescue_band = spiice.bands.rescue;
-    let mut rescue_score = SqlText::new("");
-    let mut rescue_where = SqlText::new("");
-    if rescue {
-        rescue_score
-            .push(", CASE WHEN ")
-            .push_text(&rescue_guard)
-            .push("q.any_tsq IS NOT NULL AND ")
-            .push(tsv)
-            .push(
-                " @@ q.any_tsq
-                    THEN ",
-            );
-        push_band_floor(&mut rescue_score, rescue_band)?;
-        rescue_score
-            .push(" + LEAST(COALESCE(ts_rank(")
-            .push_text(&weights)
-            .push(tsv)
-            .push(", q.any_tsq");
-        push_normalization(&mut rescue_score, rescue_band);
-        rescue_score.push("), 0.0) * 100.0, 1.0) * ");
-        push_band_width(&mut rescue_score, rescue_band)?;
-        rescue_score.push(
-            "
-                    ELSE 0.0 END",
-        );
-        rescue_where
-            .push(" OR (")
-            .push_text(&rescue_guard)
-            .push("q.any_tsq IS NOT NULL AND ")
-            .push(tsv)
-            .push(" @@ q.any_tsq)");
+    let mut exact_match = SqlText::new(tsv);
+    exact_match.push(" @@ ").push(exact_tsq);
+    let mut rescue_match = SqlText::new("");
+    if let Some(flag) = rescue_switch {
+        rescue_match.push(flag).push(" AND ");
     }
-    let mut score_expr = SqlText::new(
-        "GREATEST(
-                    CASE WHEN p.search_tsv @@ q.tsq
+    rescue_match
+        .push(rescue_tsq)
+        .push(" IS NOT NULL AND ")
+        .push(tsv)
+        .push(" @@ ")
+        .push(rescue_tsq);
+    let mut exact_score = SqlText::new("CASE WHEN ");
+    exact_score.push_text(&exact_match).push(
+        "
                          THEN ",
     );
-    push_band_floor(&mut score_expr, exact)?;
-    score_expr
+    push_band_floor(&mut exact_score, exact)?;
+    exact_score
         .push(" + LEAST(COALESCE(ts_rank_cd(")
         .push_text(&weights)
         .push(tsv)
         .push(", ")
-        .push(rank_tsq);
-    push_normalization(&mut score_expr, exact);
-    score_expr.push("), 0.0), 1.0) * ");
-    push_band_width(&mut score_expr, exact)?;
-    score_expr
-        .push(
-            "
+        .push_text(&rank_tsq);
+    push_normalization(&mut exact_score, exact);
+    exact_score.push("), 0.0), 1.0) * ");
+    push_band_width(&mut exact_score, exact)?;
+    exact_score.push(
+        "
                          ELSE 0.0 END",
-        )
-        .push_text(&rescue_score)
-        .push(
-            ",
-                    0.0
-                )::real",
-        );
-    let mut body = SqlText::new(query_side_cte(multilingual));
+    );
+    let mut rescue_score = SqlText::new("CASE WHEN ");
+    rescue_score.push_text(&rescue_match).push(
+        "
+                    THEN ",
+    );
+    push_band_floor(&mut rescue_score, rescue_band)?;
+    rescue_score
+        .push(" + LEAST(COALESCE(ts_rank(")
+        .push_text(&weights)
+        .push(tsv)
+        .push(", ")
+        .push(rescue_tsq);
+    push_normalization(&mut rescue_score, rescue_band);
+    rescue_score.push("), 0.0) * 100.0, 1.0) * ");
+    push_band_width(&mut rescue_score, rescue_band)?;
+    rescue_score.push(
+        "
+                    ELSE 0.0 END",
+    );
+    // A row scores the higher of the arms that rank it.
+    let (scores, matched) = match rows {
+        RankedRows::Exact => (exact_score, exact_match),
+        RankedRows::RescueOnly => {
+            let mut matched = rescue_match;
+            matched
+                .push(" AND NOT COALESCE(")
+                .push_text(&exact_match)
+                .push(", false)");
+            (rescue_score, matched)
+        }
+        RankedRows::Both => {
+            let mut scores = exact_score;
+            scores.push(", ").push_text(&rescue_score);
+            let mut matched = exact_match;
+            matched.push(" OR (").push_text(&rescue_match).push(")");
+            (scores, matched)
+        }
+    };
     body.push(
         "
          SELECT p.memory_id AS t,
                 p.schema_id,
-                ",
+                GREATEST(
+                    ",
     )
-    .push_text(&score_expr)
+    .push_text(&scores)
     .push(
-        " AS lexical_score
+        ",
+                    0.0
+                )::real AS lexical_score
            FROM ",
     )
     .push_ident(&table)
+    .push(from)
     .push(
-        " p, q
+        "
           WHERE p.owner_id = ANY($7::uuid[])
             AND p.schema_id = ANY($8::text[])
             AND (",
     )
-    .push(tsv)
-    .push(" @@ q.tsq")
-    .push_text(&rescue_where)
+    .push_text(&matched)
     .push(
         ")
             ",
@@ -1157,21 +1273,48 @@ fn ranked_projection_sql_parts(
     Ok(RankedCandidates { body })
 }
 
-/// The band's floor, at two decimals as `Band::parts` renders it.
-fn push_band_floor(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
+/// Whether every exact score the ranked statements render lies above every
+/// rescue score they render, whatever the ranks: an exact score is at least
+/// its band's rendered floor, a rescue score at most its band's rendered
+/// floor plus its rendered width. Freeze admits bands that overlap.
+fn bands_are_disjoint(bands: RenderBands) -> Result<bool, StorageError> {
+    let lowest_exact = band_units(bands.exact.floor)?;
+    let highest_rescue =
+        band_units(bands.rescue.floor)? + band_units(bands.rescue.ceiling - bands.rescue.floor)?;
+    Ok(lowest_exact > highest_rescue)
+}
+
+/// A band number as the statements render it: at
+/// `Proxiima.Search.bandDecimalPlaces`, as `Band::parts` does.
+fn band_number(value: f32) -> Result<SqlText, StorageError> {
+    let mut sql = SqlText::new("");
     sql.push_f32_fixed(
-        band.floor,
+        value,
         proxiima_core::ledger!(Proxiima.Search.bandDecimalPlaces),
     )?;
+    Ok(sql)
+}
+
+/// [`band_number`] in units of its last rendered place.
+fn band_units(value: f32) -> Result<i64, StorageError> {
+    let rendered = band_number(value)?;
+    rendered.as_str().replace('.', "").parse().map_err(|_| {
+        StorageError::Internal(format!(
+            "band number {value} renders as {}",
+            rendered.as_str()
+        ))
+    })
+}
+
+/// The band's floor, as [`band_number`] renders it.
+fn push_band_floor(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
+    sql.push_text(&band_number(band.floor)?);
     Ok(())
 }
 
-/// The band's width, at two decimals as `Band::parts` renders it.
+/// The band's width, as [`band_number`] renders it.
 fn push_band_width(sql: &mut SqlText, band: Band) -> Result<(), StorageError> {
-    sql.push_f32_fixed(
-        band.ceiling - band.floor,
-        proxiima_core::ledger!(Proxiima.Search.bandDecimalPlaces),
-    )?;
+    sql.push_text(&band_number(band.ceiling - band.floor)?);
     Ok(())
 }
 
@@ -1190,38 +1333,51 @@ const RANKED_MEMORY_ID: &str = "p.memory_id";
 #[cfg(any(test, feature = "testkit"))]
 const SUBSTRING_MEMORY_ID: &str = "m.t";
 
-/// Fixed candidate statements emitted into a projection's migration.
-/// Request switches are values; table names and scoring remain contract-owned.
-#[cfg(any(test, feature = "testkit"))]
-fn projection_candidate_statements(
-    projections: &[MemorySearchProjection],
-    substring: bool,
-    recency: bool,
-) -> Result<Option<SqlText>, StorageError> {
-    if substring {
-        return Ok(
-            projection_substring_candidates(projections)?.map(|candidates| {
-                SubstringCandidates::statement(candidates.legs.iter(), candidate_order_of(recency))
-            }),
-        );
-    }
-    projection_ranked_candidates(projections)
-        .map(|query| query.map(|query| query.statement(candidate_order_of(recency))))
-}
-
+/// The lexical candidate function's statements: staged when the spiice's
+/// bands are disjoint, one single pass when they overlap.
 pub(crate) fn projection_ranked_candidates(
     projections: &[MemorySearchProjection],
-) -> Result<Option<RankedCandidates>, StorageError> {
+) -> Result<Option<LexicalCandidates>, StorageError> {
     let Some(spiice) = core_band_scan(projections) else {
         return Ok(None);
     };
+    let candidates = if bands_are_disjoint(spiice.bands)? {
+        LexicalCandidates::Staged(StagedCandidates {
+            multilingual: multilingual(spiice.head()),
+            exact: candidate_statement(&spiice, QuerySide::Bound, RankedRows::Exact)?,
+            rescue: candidate_statement(&spiice, QuerySide::Bound, RankedRows::RescueOnly)?,
+            merged: candidate_statement(&spiice, QuerySide::Bound, RankedRows::Both)?,
+        })
+    } else {
+        LexicalCandidates::SinglePass(candidate_statement(
+            &spiice,
+            QuerySide::Analyzed,
+            RankedRows::Both,
+        )?)
+    };
+    Ok(Some(candidates))
+}
+
+/// One statement of the lexical candidate function, before its ordering.
+/// Request switches are values; table names and scoring remain
+/// contract-owned. The single pass switches its rescue arm on `$9`; a stage
+/// runs only when the function asks for its rows.
+fn candidate_statement(
+    spiice: &SpiiceScan<'_>,
+    side: QuerySide,
+    rows: RankedRows,
+) -> Result<RankedCandidates, StorageError> {
     let admit = candidate_authorization("p.memory_id", &SqlText::new(""));
     let mut tags = SqlText::new(
         " AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
                    OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[])))",
     );
     tags.push_text(&candidate_tags(&SqlText::new("p.tag")));
-    ranked_projection_sql_parts(&spiice, true, &tags, &admit, Some("$9::boolean")).map(Some)
+    let rescue_switch = match side {
+        QuerySide::Analyzed => Some("$9::boolean"),
+        QuerySide::Bound => None,
+    };
+    ranked_projection_sql_parts(spiice, side, rows, &tags, &admit, rescue_switch)
 }
 
 /// The participating schemas the candidate functions render: those on core
@@ -1600,63 +1756,79 @@ fn search_admit_sql(heads_only: bool) -> SqlText {
     sql
 }
 
-/// Match-side tsquery. When the schema declares `LanguagePolicy::PerRow`
-/// (agent memory tables), OR one `websearch_to_tsquery` per
-/// `lexical_languages` row — the query cannot know its language. Schemas
-/// that pin one config stay on `lexical_config()`.
-fn query_side_cte(multilingual: bool) -> &'static str {
-    if multilingual {
+/// The query side of a statement that analyzes the raw query `$1` itself:
+/// `q.analyzed`, the exact tsquery `q.tsq` and the rescue tsquery
+/// `q.any_tsq`, each computed once.
+fn query_side_cte(multilingual: bool) -> SqlText {
+    SqlText::fill(
         "WITH analyzed_query AS MATERIALIZED (
-             SELECT proxiima_core.lexical_scrub($1) AS scrubbed,
-                    proxiima_core.lexical_query_text(proxiima_core.lexical_config(),
-                        proxiima_core.lexical_scrub($1)) AS analyzed
+             SELECT {analyzed} AS analyzed
          ), q AS MATERIALIZED (
-             SELECT s.scrubbed, s.analyzed,
-                    COALESCE(
-                        (SELECT proxiima_core.tsquery_or_agg(
-                                    websearch_to_tsquery(l.config, s.analyzed)
-                                    ORDER BY l.config)
-                           FROM proxiima_core.lexical_languages l),
-                        websearch_to_tsquery(proxiima_core.lexical_config(), s.analyzed)
-                    ) AS tsq,
-                    COALESCE(
-                        (SELECT proxiima_core.tsquery_or_agg(
-                                    NULLIF(
-                                        replace(
-                                            plainto_tsquery(l.config, s.analyzed)::text,
-                                            ' & ', ' | '),
-                                        '')::tsquery
-                                    ORDER BY l.config)
-                           FROM proxiima_core.lexical_languages l),
-                        NULLIF(
-                            replace(
-                                plainto_tsquery(proxiima_core.lexical_config(), s.analyzed)::text,
-                                ' & ', ' | '),
-                            '')::tsquery
-                    ) AS any_tsq
+             SELECT s.analyzed,
+                    {exact} AS tsq,
+                    {rescue} AS any_tsq
                FROM analyzed_query s
-         )"
-    } else {
-        "WITH q AS MATERIALIZED (
-             SELECT proxiima_core.lexical_scrub($1) AS scrubbed,
-                    websearch_to_tsquery(proxiima_core.lexical_config(),
-                        proxiima_core.lexical_scrub($1)) AS tsq,
-                    NULLIF(
-                        replace(
-                            plainto_tsquery(proxiima_core.lexical_config(),
-                                proxiima_core.lexical_scrub($1))::text,
-                            ' & ', ' | '),
-                        '')::tsquery AS any_tsq
-         )"
-    }
+         )",
+        &[
+            ("{analyzed}", &analyzed_query_sql(multilingual, "$1")),
+            (
+                "{exact}",
+                &tsquery_sql(multilingual, EXACT_TSQUERY, "s.analyzed"),
+            ),
+            (
+                "{rescue}",
+                &tsquery_sql(multilingual, RESCUE_TSQUERY, "s.analyzed"),
+            ),
+        ],
+    )
 }
 
-fn rank_tsquery_expr(multilingual: bool) -> &'static str {
-    if multilingual {
-        "websearch_to_tsquery(p.lexical_language, q.analyzed)"
+/// The text a query's tsqueries are built from, from the raw query `raw`. A
+/// `LanguagePolicy::PerRow` surface analyzes it under the deployment's
+/// configuration; a pinned one only scrubs it.
+fn analyzed_query_sql(multilingual: bool, raw: &'static str) -> SqlText {
+    let template = if multilingual {
+        "proxiima_core.lexical_query_text(proxiima_core.lexical_config(), proxiima_core.lexical_scrub({raw}))"
     } else {
-        "q.tsq"
+        "proxiima_core.lexical_scrub({raw})"
+    };
+    SqlText::fill(template, &[("{raw}", &SqlText::new(raw))])
+}
+
+/// The exact query: the analyzed text as a web search.
+const EXACT_TSQUERY: &str = "websearch_to_tsquery({config}, {text})";
+/// The rescue query: any one of the analyzed text's lexemes, `NULL` when it
+/// has none.
+const RESCUE_TSQUERY: &str =
+    "NULLIF(replace(plainto_tsquery({config}, {text})::text, ' & ', ' | '), '')::tsquery";
+
+/// `template`'s tsquery of the analyzed text `text`. A
+/// `LanguagePolicy::PerRow` surface cannot know the query's language, so it
+/// ORs one per `lexical_languages` row, falling back to `lexical_config()`
+/// when there is none; a pinned surface stays on `lexical_config()`.
+fn tsquery_sql(multilingual: bool, template: &'static str, text: &'static str) -> SqlText {
+    let text = SqlText::new(text);
+    let under = |config: &'static str| {
+        SqlText::fill(
+            template,
+            &[("{config}", &SqlText::new(config)), ("{text}", &text)],
+        )
+    };
+    let deployment = under("proxiima_core.lexical_config()");
+    if !multilingual {
+        return deployment;
     }
+    SqlText::fill(
+        "COALESCE(
+                        (SELECT proxiima_core.tsquery_or_agg({each} ORDER BY l.config)
+                           FROM proxiima_core.lexical_languages l),
+                        {deployment}
+                    )",
+        &[
+            ("{each}", &under("l.config")),
+            ("{deployment}", &deployment),
+        ],
+    )
 }
 
 /// Admit vector-port candidates through the ordinary memory read and the
@@ -2073,13 +2245,18 @@ pub fn substring_candidate_sql_for_tests(
     projections: &[MemorySearchProjection],
     recency: bool,
 ) -> Result<SqlText, StorageError> {
-    projection_candidate_statements(projections, true, recency)?
+    projection_substring_candidates(projections)?
+        .map(|candidates| {
+            SubstringCandidates::statement(candidates.legs.iter(), candidate_order_of(recency))
+        })
         .ok_or_else(|| StorageError::Internal("no substring leg in the projections".into()))
 }
 
-/// The ranked candidate statement the migrated `search_lexical_candidates`
-/// function runs, for the plan pins. It binds the function's parameters in
-/// order, all but `recency`, which picks the ordering.
+/// The single pass of `search_lexical_candidates`: what the migrated function
+/// runs for a spiice whose bands overlap, and the rows, in their order, that
+/// the staged function returns for one whose bands do not. It binds the
+/// function's parameters in order, all but `recency`, which picks the
+/// ordering.
 ///
 /// # Errors
 ///
@@ -2090,8 +2267,40 @@ pub fn ranked_candidate_sql_for_tests(
     projections: &[MemorySearchProjection],
     recency: bool,
 ) -> Result<SqlText, StorageError> {
-    projection_candidate_statements(projections, false, recency)?
-        .ok_or_else(|| StorageError::Internal("no ranked arm in the projections".into()))
+    let spiice = core_band_scan(projections)
+        .ok_or_else(|| StorageError::Internal("no ranked arm in the projections".into()))?;
+    candidate_statement(&spiice, QuerySide::Analyzed, RankedRows::Both)
+        .map(|query| query.statement(candidate_order_of(recency)))
+}
+
+/// The stages of the migrated `search_lexical_candidates` function, for the
+/// plan pins: the exact and the rescue stage in relevance order, and the
+/// statement over both in recency order. They bind the function's
+/// parameters in order, except that `$1` is the analyzed query, and they add
+/// `$13`, the exact tsquery, and `$14`, the rescue tsquery.
+///
+/// # Errors
+///
+/// Propagates the builder's; refuses projections that declare no ranked arm
+/// or whose bands overlap, which run the single pass.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub fn staged_candidate_sql_for_tests(
+    projections: &[MemorySearchProjection],
+) -> Result<[SqlText; 3], StorageError> {
+    match projection_ranked_candidates(projections)? {
+        Some(LexicalCandidates::Staged(stages)) => Ok([
+            stages.exact.statement(SearchOrder::Relevance),
+            stages.rescue.statement(SearchOrder::Relevance),
+            stages.merged.statement(SearchOrder::Recency),
+        ]),
+        Some(LexicalCandidates::SinglePass(_)) => Err(StorageError::Internal(
+            "the projections' bands overlap; their function runs the single pass".into(),
+        )),
+        None => Err(StorageError::Internal(
+            "no ranked arm in the projections".into(),
+        )),
+    }
 }
 
 /// The store's RLS admission query for vector-port candidates.

@@ -3862,7 +3862,7 @@ CREATE POLICY proxiima_search_candidates ON proxiima_core.projection FOR SELECT 
 SET LOCAL ROLE proxiima_search;
 EXECUTE $generated_function$CREATE OR REPLACE FUNCTION proxiima_core.search_lexical_candidates(query_text text, candidate_limit bigint, requested_tags text[], since_time timestamptz, until_time timestamptz, before_id uuid, requested_owners uuid[], requested_schemas text[], rescue boolean, recency boolean, heads_only boolean, requested_kind text, tag_all boolean)
 RETURNS TABLE(t uuid, schema_id text, lexical_score real)
-LANGUAGE plpgsql SECURITY DEFINER
+LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path TO pg_catalog, pg_temp
 AS $candidate_function$
 BEGIN
@@ -3870,57 +3870,105 @@ PERFORM proxiima_core.assert_search_scope(requested_owners);
 IF candidate_limit IS NULL OR candidate_limit < 1 OR candidate_limit > 1000 THEN
 RAISE EXCEPTION 'candidate limit must be between 1 and 1000' USING ERRCODE = 'PX002';
 END IF;
-RETURN QUERY EXECUTE 'WITH analyzed_query AS MATERIALIZED (
-             SELECT proxiima_core.lexical_scrub($1) AS scrubbed,
-                    proxiima_core.lexical_query_text(proxiima_core.lexical_config(),
-                        proxiima_core.lexical_scrub($1)) AS analyzed
-         ), q AS MATERIALIZED (
-             SELECT s.scrubbed, s.analyzed,
-                    COALESCE(
-                        (SELECT proxiima_core.tsquery_or_agg(
-                                    websearch_to_tsquery(l.config, s.analyzed)
-                                    ORDER BY l.config)
+DECLARE
+    analyzed text := proxiima_core.lexical_query_text(proxiima_core.lexical_config(), proxiima_core.lexical_scrub(query_text));
+    exact_tsq tsquery := COALESCE(
+                        (SELECT proxiima_core.tsquery_or_agg(websearch_to_tsquery(l.config, analyzed) ORDER BY l.config)
                            FROM proxiima_core.lexical_languages l),
-                        websearch_to_tsquery(proxiima_core.lexical_config(), s.analyzed)
-                    ) AS tsq,
-                    COALESCE(
-                        (SELECT proxiima_core.tsquery_or_agg(
-                                    NULLIF(
-                                        replace(
-                                            plainto_tsquery(l.config, s.analyzed)::text,
-                                            '' & '', '' | ''),
-                                        '''')::tsquery
-                                    ORDER BY l.config)
+                        websearch_to_tsquery(proxiima_core.lexical_config(), analyzed)
+                    );
+    rescue_tsq tsquery;
+    exact_count bigint := 0;
+    do_rescue boolean := COALESCE(rescue, false);
+    do_recency boolean := COALESCE(recency, false);
+BEGIN
+IF do_recency AND do_rescue THEN
+    rescue_tsq := COALESCE(
+                        (SELECT proxiima_core.tsquery_or_agg(NULLIF(replace(plainto_tsquery(l.config, analyzed)::text, ' & ', ' | '), '')::tsquery ORDER BY l.config)
                            FROM proxiima_core.lexical_languages l),
-                        NULLIF(
-                            replace(
-                                plainto_tsquery(proxiima_core.lexical_config(), s.analyzed)::text,
-                                '' & '', '' | ''),
-                            '''')::tsquery
-                    ) AS any_tsq
-               FROM analyzed_query s
-         )
+                        NULLIF(replace(plainto_tsquery(proxiima_core.lexical_config(), analyzed)::text, ' & ', ' | '), '')::tsquery
+                    );
+    IF rescue_tsq IS NOT NULL AND tsquerysend(rescue_tsq) IS DISTINCT FROM tsquerysend(exact_tsq) THEN
+        RETURN QUERY EXECUTE '
          SELECT p.memory_id AS t,
                 p.schema_id,
                 GREATEST(
-                    CASE WHEN p.search_tsv @@ q.tsq
-                         THEN 0.50 + LEAST(COALESCE(ts_rank_cd(p.search_tsv, websearch_to_tsquery(p.lexical_language, q.analyzed), 32), 0.0), 1.0) * 0.50
-                         ELSE 0.0 END, CASE WHEN $9::boolean AND q.any_tsq IS NOT NULL AND p.search_tsv @@ q.any_tsq
-                    THEN 0.25 + LEAST(COALESCE(ts_rank(p.search_tsv, q.any_tsq, 33), 0.0) * 100.0, 1.0) * 0.20
+                    CASE WHEN p.search_tsv @@ $13::tsquery
+                         THEN 0.50 + LEAST(COALESCE(ts_rank_cd(p.search_tsv, websearch_to_tsquery(p.lexical_language, $1), 32), 0.0), 1.0) * 0.50
+                         ELSE 0.0 END, CASE WHEN $14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery
+                    THEN 0.25 + LEAST(COALESCE(ts_rank(p.search_tsv, $14::tsquery, 33), 0.0) * 100.0, 1.0) * 0.20
                     ELSE 0.0 END,
                     0.0
                 )::real AS lexical_score
-           FROM proxiima_core.projection p, q
+           FROM proxiima_core.projection p
           WHERE p.owner_id = ANY($7::uuid[])
             AND p.schema_id = ANY($8::text[])
-            AND (p.search_tsv @@ q.tsq OR ($9::boolean AND q.any_tsq IS NOT NULL AND p.search_tsv @@ q.any_tsq))
+            AND (p.search_tsv @@ $13::tsquery OR ($14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery))
              AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
                    OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
             AND ($4::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) >= $4)
             AND ($5::timestamptz IS NULL
                  OR proxiima_core.memory_created_at(p.memory_id) <= $5)
-            AND ($6::uuid IS NULL OR p.memory_id < $6)' || CASE WHEN recency THEN ' ORDER BY p.memory_id DESC' ELSE ' ORDER BY lexical_score DESC, p.memory_id DESC' END || ' LIMIT $2' USING query_text, candidate_limit, requested_tags, since_time, until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, requested_kind, tag_all;
+            AND ($6::uuid IS NULL OR p.memory_id < $6)' || ' ORDER BY p.memory_id DESC LIMIT $2' USING analyzed, candidate_limit, requested_tags, since_time, until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, requested_kind, tag_all, exact_tsq, rescue_tsq;
+        RETURN;
+    END IF;
+END IF;
+IF exact_tsq IS NOT NULL AND exact_tsq <> ''::tsquery THEN
+    RETURN QUERY EXECUTE '
+         SELECT p.memory_id AS t,
+                p.schema_id,
+                GREATEST(
+                    CASE WHEN p.search_tsv @@ $13::tsquery
+                         THEN 0.50 + LEAST(COALESCE(ts_rank_cd(p.search_tsv, websearch_to_tsquery(p.lexical_language, $1), 32), 0.0), 1.0) * 0.50
+                         ELSE 0.0 END,
+                    0.0
+                )::real AS lexical_score
+           FROM proxiima_core.projection p
+          WHERE p.owner_id = ANY($7::uuid[])
+            AND p.schema_id = ANY($8::text[])
+            AND (p.search_tsv @@ $13::tsquery)
+             AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
+                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
+            AND ($4::timestamptz IS NULL
+                 OR proxiima_core.memory_created_at(p.memory_id) >= $4)
+            AND ($5::timestamptz IS NULL
+                 OR proxiima_core.memory_created_at(p.memory_id) <= $5)
+            AND ($6::uuid IS NULL OR p.memory_id < $6)' || CASE WHEN do_recency THEN ' ORDER BY p.memory_id DESC' ELSE ' ORDER BY lexical_score DESC, p.memory_id DESC' END || ' LIMIT $2' USING analyzed, candidate_limit, requested_tags, since_time, until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, requested_kind, tag_all, exact_tsq, rescue_tsq;
+    GET DIAGNOSTICS exact_count = ROW_COUNT;
+END IF;
+IF do_recency OR NOT do_rescue OR exact_count >= candidate_limit THEN
+    RETURN;
+END IF;
+rescue_tsq := COALESCE(
+                        (SELECT proxiima_core.tsquery_or_agg(NULLIF(replace(plainto_tsquery(l.config, analyzed)::text, ' & ', ' | '), '')::tsquery ORDER BY l.config)
+                           FROM proxiima_core.lexical_languages l),
+                        NULLIF(replace(plainto_tsquery(proxiima_core.lexical_config(), analyzed)::text, ' & ', ' | '), '')::tsquery
+                    );
+IF rescue_tsq IS NULL OR tsquerysend(rescue_tsq) IS NOT DISTINCT FROM tsquerysend(exact_tsq) THEN
+    RETURN;
+END IF;
+RETURN QUERY EXECUTE '
+         SELECT p.memory_id AS t,
+                p.schema_id,
+                GREATEST(
+                    CASE WHEN $14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery
+                    THEN 0.25 + LEAST(COALESCE(ts_rank(p.search_tsv, $14::tsquery, 33), 0.0) * 100.0, 1.0) * 0.20
+                    ELSE 0.0 END,
+                    0.0
+                )::real AS lexical_score
+           FROM proxiima_core.projection p
+          WHERE p.owner_id = ANY($7::uuid[])
+            AND p.schema_id = ANY($8::text[])
+            AND ($14::tsquery IS NOT NULL AND p.search_tsv @@ $14::tsquery AND NOT COALESCE(p.search_tsv @@ $13::tsquery, false))
+             AND (p.owner_id = ANY(proxiima_core.search_owner_ids())
+                   OR p.memory_id IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($3::text[] IS NULL OR CASE WHEN $12::boolean THEN p.tag @> $3::text[] ELSE p.tag && $3::text[] END) AND EXISTS (SELECT 1 FROM proxiima_core.live_memory authorized_memory WHERE authorized_memory.t = p.memory_id AND (authorized_memory.owner_id = ANY($7::uuid[]) OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_ids() WHERE owner_id=ANY($7::uuid[]))) AND ($11::text IS NULL OR authorized_memory.kind::text = $11) AND (NOT $10::boolean OR authorized_memory.t IN (SELECT memory_t FROM proxiima_core.goal_visible_memory_heads()) OR EXISTS (SELECT 1 FROM proxiima_core.memory_head authorized_head WHERE authorized_head.owner_id = authorized_memory.owner_id AND authorized_head.t = authorized_memory.t AND authorized_head.handle = authorized_memory.handle)))
+            AND ($4::timestamptz IS NULL
+                 OR proxiima_core.memory_created_at(p.memory_id) >= $4)
+            AND ($5::timestamptz IS NULL
+                 OR proxiima_core.memory_created_at(p.memory_id) <= $5)
+            AND ($6::uuid IS NULL OR p.memory_id < $6)' || ' ORDER BY lexical_score DESC, p.memory_id DESC LIMIT $2' USING analyzed, candidate_limit - exact_count, requested_tags, since_time, until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, requested_kind, tag_all, exact_tsq, rescue_tsq;
+END;
 END
 $candidate_function$;$generated_function$;
 REVOKE ALL ON FUNCTION proxiima_core.search_lexical_candidates(text, bigint, text[], timestamp with time zone, timestamp with time zone, uuid, uuid[], text[], boolean, boolean, boolean, text, boolean) FROM PUBLIC;

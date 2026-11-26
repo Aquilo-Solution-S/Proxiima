@@ -8,8 +8,9 @@ use proxiima_core::spiice::SpiiceContract;
 use proxiima_core::{PgIdent, SqlText, StorageError, verbs::query::SearchOrder};
 
 use crate::projection::Artifact;
-use crate::verbs::query::RankedCandidates;
-use crate::verbs::query::SubstringCandidates;
+use crate::verbs::query::{
+    LexicalCandidates, RankedCandidates, StagedCandidates, SubstringCandidates,
+};
 
 /// The fixed `PostgreSQL` identity arguments of both candidate functions.
 pub const ARGUMENT_TYPES: &str = "text, bigint, text[], timestamp with time zone, timestamp with time zone, uuid, uuid[], text[], boolean, boolean, boolean, text, boolean";
@@ -40,6 +41,18 @@ impl CandidateKind {
         match self {
             Self::Lexical => "t uuid, schema_id text, lexical_score real",
             Self::Substring => "t uuid, lexical_score real",
+        }
+    }
+
+    /// The function's volatility: its `CREATE FUNCTION` keyword and the
+    /// `pg_proc.provolatile` code that keyword stores. Every statement of a
+    /// `STABLE` function reads its caller's snapshot, so under `READ
+    /// COMMITTED` a commit between two lexical stages cannot add, drop or move
+    /// a row between them.
+    pub(crate) fn volatility(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Lexical => (" STABLE", "s"),
+            Self::Substring => ("", "v"),
         }
     }
 }
@@ -227,9 +240,10 @@ fn candidate_definitions_for_projection(
              RETURNS TABLE(",
             )
             .push(returns)
+            .push(")\nLANGUAGE plpgsql")
+            .push(kind.volatility().0)
             .push(
-                ")\n\
-             LANGUAGE plpgsql SECURITY DEFINER\n\
+                " SECURITY DEFINER\n\
              SET search_path TO pg_catalog, pg_temp\n\
              AS $candidate_function$",
             )
@@ -289,13 +303,31 @@ fn candidate_definitions_for_projection(
     Ok(definitions)
 }
 
-const USING_ARGUMENTS: &str = "USING query_text, candidate_limit, requested_tags, since_time, \
-     until_time, before_id, requested_owners, requested_schemas, rescue, heads_only, \
-     requested_kind, tag_all;";
+/// The `USING` clause of one candidate statement: `$1` the query, `$2` the
+/// limit, `$3`..`$12` the request's filters in parameter order, then `extra`.
+fn using(query: &'static str, limit: &'static str, extra: &'static str) -> SqlText {
+    SqlText::fill(
+        "USING {query}, {limit}, requested_tags, since_time, until_time, before_id, \
+         requested_owners, requested_schemas, rescue, heads_only, requested_kind, \
+         tag_all{extra};",
+        &[
+            ("{query}", &SqlText::new(query)),
+            ("{limit}", &SqlText::new(limit)),
+            ("{extra}", &SqlText::new(extra)),
+        ],
+    )
+}
 
 /// EXECUTE plans each search using its actual values. A generic plan cannot
 /// hide the tag/text condition behind optional-filter switches.
-fn execution(query: &RankedCandidates) -> SqlText {
+fn execution(candidates: &LexicalCandidates) -> SqlText {
+    match candidates {
+        LexicalCandidates::SinglePass(query) => single_pass_execution(query),
+        LexicalCandidates::Staged(stages) => staged_execution(stages),
+    }
+}
+
+fn single_pass_execution(query: &RankedCandidates) -> SqlText {
     let mut sql = SqlText::new("RETURN QUERY EXECUTE ");
     sql.push_sql_literal(&query.body)
         .push(" || CASE WHEN recency THEN ' ORDER BY ")
@@ -303,7 +335,80 @@ fn execution(query: &RankedCandidates) -> SqlText {
         .push("' ELSE ' ORDER BY ")
         .push(RankedCandidates::order_sql(SearchOrder::Relevance))
         .push("' END || ' LIMIT $2' ")
-        .push(USING_ARGUMENTS);
+        .push_text(&using("query_text", "candidate_limit", ""));
+    sql
+}
+
+/// The staged lexical search: the query analyzed once, then only the
+/// statements the request needs.
+///
+/// In relevance order each exact match ranks above each rescue match, so the
+/// exact stage runs first and the rescue stage runs only for the rows left
+/// in the window, over the rows the exact query does not match. A rescue
+/// query that adds no row to the exact one (a single word, or only stop
+/// words) runs no rescue stage; equality compares `tsquerysend(...)` because
+/// `PostgreSQL`'s `tsquery` `=` ignores prefix (`:*`) and weight modifiers.
+/// Recency order interleaves the two kinds, so one statement over both serves
+/// it.
+fn staged_execution(stages: &StagedCandidates) -> SqlText {
+    let bound = ", exact_tsq, rescue_tsq";
+    SqlText::fill(
+        "DECLARE
+    analyzed text := {analyzed};
+    exact_tsq tsquery := {exact_tsq};
+    rescue_tsq tsquery;
+    exact_count bigint := 0;
+    do_rescue boolean := COALESCE(rescue, false);
+    do_recency boolean := COALESCE(recency, false);
+BEGIN
+IF do_recency AND do_rescue THEN
+    rescue_tsq := {rescue_tsq};
+    IF rescue_tsq IS NOT NULL AND tsquerysend(rescue_tsq) IS DISTINCT FROM tsquerysend(exact_tsq) THEN
+        RETURN QUERY EXECUTE {merged} || ' ORDER BY {recency} LIMIT $2' {using}
+        RETURN;
+    END IF;
+END IF;
+IF exact_tsq IS NOT NULL AND exact_tsq <> ''::tsquery THEN
+    RETURN QUERY EXECUTE {exact} || CASE WHEN do_recency THEN ' ORDER BY {recency}' ELSE ' ORDER BY {relevance}' END || ' LIMIT $2' {using}
+    GET DIAGNOSTICS exact_count = ROW_COUNT;
+END IF;
+IF do_recency OR NOT do_rescue OR exact_count >= candidate_limit THEN
+    RETURN;
+END IF;
+rescue_tsq := {rescue_tsq};
+IF rescue_tsq IS NULL OR tsquerysend(rescue_tsq) IS NOT DISTINCT FROM tsquerysend(exact_tsq) THEN
+    RETURN;
+END IF;
+RETURN QUERY EXECUTE {rescue} || ' ORDER BY {relevance} LIMIT $2' {rescue_using}
+END;",
+        &[
+            ("{analyzed}", &stages.analyzed_sql("query_text")),
+            ("{exact_tsq}", &stages.exact_tsquery_sql("analyzed")),
+            ("{rescue_tsq}", &stages.rescue_tsquery_sql("analyzed")),
+            ("{merged}", &literal(&stages.merged.body)),
+            ("{exact}", &literal(&stages.exact.body)),
+            ("{rescue}", &literal(&stages.rescue.body)),
+            (
+                "{recency}",
+                &SqlText::new(RankedCandidates::order_sql(SearchOrder::Recency)),
+            ),
+            (
+                "{relevance}",
+                &SqlText::new(RankedCandidates::order_sql(SearchOrder::Relevance)),
+            ),
+            ("{using}", &using("analyzed", "candidate_limit", bound)),
+            (
+                "{rescue_using}",
+                &using("analyzed", "candidate_limit - exact_count", bound),
+            ),
+        ],
+    )
+}
+
+/// A statement as the quoted text an `EXECUTE` runs.
+fn literal(statement: &SqlText) -> SqlText {
+    let mut sql = SqlText::new("");
+    sql.push_sql_literal(statement);
     sql
 }
 
@@ -350,7 +455,7 @@ RETURN QUERY EXECUTE ",
     .push("' ELSE ' ORDER BY ")
     .push(SubstringCandidates::order_sql(SearchOrder::Relevance))
     .push("' END || ' LIMIT $2' ")
-    .push(USING_ARGUMENTS)
+    .push_text(&using("query_text", "candidate_limit", ""))
     .push("\nEND;");
     Ok(sql)
 }
@@ -450,5 +555,45 @@ mod tests {
         );
         assert!(call_sql("unqualified", false).is_err());
         assert!(call_sql("a.b; DROP TABLE x", false).is_err());
+    }
+
+    /// The lexical function stages only when its exact band's rendered floor
+    /// lies above everything its rescue band renders; at a shared edge or an
+    /// overlap it runs the single pass, which interleaves the two kinds.
+    #[test]
+    fn only_disjoint_bands_stage_the_lexical_search() {
+        use crate::verbs::query::{LexicalCandidates, projection_ranked_candidates};
+
+        let note = proxiima_core::SpiiceRegistry::new()
+            .freeze_or_panic_for_tests()
+            .search_projections()
+            .iter()
+            .find(|projection| projection.schema_id.as_str() == "core/agent-note-v1")
+            .expect("core/agent-note-v1 is a search surface")
+            .clone();
+        let shipped = note.render_bands.expect("core declares render bands");
+        let staged = |exact_floor: f32, rescue_ceiling: f32| {
+            let mut bands = shipped;
+            bands.exact.floor = exact_floor;
+            bands.rescue.ceiling = rescue_ceiling;
+            let mut projection = note.clone();
+            projection.render_bands = Some(bands);
+            match projection_ranked_candidates(&[projection]).expect("candidates") {
+                Some(LexicalCandidates::Staged(_)) => true,
+                Some(LexicalCandidates::SinglePass(_)) => false,
+                None => panic!("the note projection has a ranked arm"),
+            }
+        };
+        assert!(
+            staged(shipped.exact.floor, shipped.rescue.ceiling),
+            "0.50 over 0.45"
+        );
+        assert!(staged(0.46, 0.45), "one rendered place apart");
+        assert!(!staged(0.45, 0.45), "a shared edge");
+        assert!(
+            !staged(0.454, 0.451),
+            "declared apart, rendered at one edge"
+        );
+        assert!(!staged(0.40, 0.45), "an overlap");
     }
 }

@@ -723,6 +723,121 @@ async fn tagged_search_scans_spiice_sidecars() {
     result.expect("spiice sidecar search failed");
 }
 
+/// A spiice's lexical function returns its single pass's rows, in its order
+/// and with its scores, whatever its language policy and whether or not its
+/// bands let it stage: a per-row and a pinned surface stage, a surface whose
+/// exact band reaches into its rescue band runs the single pass.
+#[tokio::test]
+async fn spiice_lexical_functions_return_their_single_pass_rows() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    split_role_urls_for(&db_name, &["proxiima_docs"])
+        .await
+        .expect("split docs roles");
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        create_user(pool, owner.as_user()).await?;
+        create_docs_search_surface(pool).await?;
+        let origin = seed_note_lang(&pg, owner, "Origin", "origin body", None, &[]).await?;
+        for (text, tags) in [
+            ("Antriebswelle im Getriebe", &["shared"][..]),
+            ("Antriebswelle Getriebe Getriebe", &["shared", "gear"][..]),
+            ("Antriebswelle im Motor", &["shared"][..]),
+            ("Antriebswelle am Rad", &["wheel"][..]),
+            ("Getriebe im Lager", &["shared"][..]),
+            ("Lager im Motor", &["shared"][..]),
+        ] {
+            seed_docs_note(pool, owner, origin, text, tags).await?;
+        }
+        let per_row = docs_projection();
+        let pinned = MemorySearchProjection {
+            language: LanguagePolicy::Pinned("simple"),
+            ..docs_projection()
+        };
+        let mut overlapping_bands = per_row.render_bands.ok_or("docs declare render bands")?;
+        overlapping_bands.exact.floor = overlapping_bands.rescue.ceiling;
+        let overlapping = MemorySearchProjection {
+            render_bands: Some(overlapping_bands),
+            ..docs_projection()
+        };
+        let scope = owner_scope_for_tests(&[owner]);
+        let owners = [owner.into_inner()];
+        for (projection, staged) in [(per_row, true), (pinned, true), (overlapping, false)] {
+            let projections = std::slice::from_ref(&projection);
+            assert_eq!(
+                proxiima_storage_pg::verbs::query::staged_candidate_sql_for_tests(projections)
+                    .is_ok(),
+                staged,
+                "{:?}",
+                projection.language
+            );
+            for artifact in
+                proxiima_storage_pg::search_candidates::candidate_artifacts_for_tests(projections)?
+            {
+                sqlx::raw_sql(artifact.forward).execute(pool).await?;
+            }
+            let base = candidates::LexicalCall::new(
+                "Antriebswelle Getriebe",
+                &owners,
+                &[projection.schema_id.as_str()],
+                "abstraction",
+            );
+            let mut calls = Vec::new();
+            for query in [
+                "Antriebswelle Getriebe",
+                "Getriebe -Motor",
+                "Lager",
+                "im am",
+            ] {
+                for rescue in [Some(true), Some(false), None] {
+                    for recency in [Some(false), Some(true), None] {
+                        for limit in [1, 2, 8] {
+                            calls.push(candidates::LexicalCall {
+                                query,
+                                limit,
+                                rescue,
+                                recency,
+                                ..base.clone()
+                            });
+                        }
+                    }
+                }
+            }
+            calls.push(candidates::LexicalCall {
+                tags: Some(vec!["shared".into(), "gear".into()]),
+                tag_all: true,
+                ..base.clone()
+            });
+            calls.push(candidates::LexicalCall {
+                tags: Some(vec!["wheel".into()]),
+                ..base.clone()
+            });
+            for call in &calls {
+                let (rows, single_pass) =
+                    candidates::lexical_and_single_pass(&pg, &scope, projections, call).await?;
+                candidates::assert_single_pass_rows(&rows, &single_pass, call);
+            }
+            let (rows, _) =
+                candidates::lexical_and_single_pass(&pg, &scope, projections, &base).await?;
+            assert_eq!(
+                rows.len(),
+                5,
+                "{:?}: every row naming either word",
+                projection.language
+            );
+        }
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("spiice lexical functions failed");
+}
+
 #[tokio::test]
 async fn lexical_search_matches_german_via_lexical_languages() {
     let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());

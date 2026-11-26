@@ -99,9 +99,10 @@ impl SearchDefinitions {
             let strict: bool = row.try_get("proisstrict").map_err(catalog_error)?;
             let volatility: String = row.try_get("provolatile").map_err(catalog_error)?;
             let parallel: String = row.try_get("proparallel").map_err(catalog_error)?;
+            // An IMMUTABLE function's result may be cached across snapshots.
             if !definer
                 || strict
-                || volatility != "v"
+                || volatility == "i"
                 || parallel != "u"
                 || language != "plpgsql"
                 || owner_name != "proxiima_search"
@@ -114,10 +115,12 @@ impl SearchDefinitions {
                     definition.signature.as_str()
                 )));
             }
-            if body != definition.body.as_str() {
+            // A release that changes the generated function changes its
+            // body or its volatility; migration replaces both.
+            if body != definition.body.as_str() || volatility != definition.kind.volatility().1 {
                 return Err(StorageError::MigrationRequired {
                     details: format!(
-                        "generated candidate function {} has a stale body",
+                        "generated candidate function {} has a stale body or volatility",
                         definition.signature.as_str()
                     ),
                 });

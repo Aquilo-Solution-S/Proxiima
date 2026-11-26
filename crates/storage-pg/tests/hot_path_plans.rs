@@ -27,7 +27,7 @@ use proxiima_storage_pg::verbs::query::{
     inbound_pin_sql_for_tests, memory_page_sql_for_tests, ranked_candidate_sql_for_tests,
     ranked_projection_sql_for_tests, search_admit_sql_for_tests,
     semantic_candidate_admission_sql_for_tests, set_hnsw_search_sql_for_tests,
-    substring_candidate_sql_for_tests, substring_sql_for_tests,
+    staged_candidate_sql_for_tests, substring_candidate_sql_for_tests, substring_sql_for_tests,
 };
 use proxiima_storage_pg::verbs::{
     fresh_backlog_estimate_sql_for_tests, prune_published_sql_for_tests,
@@ -86,7 +86,7 @@ fn unit_values(dim: EmbeddingDim) -> Vec<f32> {
 /// is visibly the worse plan.
 const CORPUS_ROWS: i32 = 4_000;
 
-/// Seed `CORPUS_ROWS` notes for `owner` containing `term`, each with its
+/// Seed `rows` notes for `owner` containing `term`, each with its
 /// admission and projection row.
 ///
 /// Three statements, not one: `memory_align_head` is a BEFORE INSERT trigger
@@ -100,6 +100,7 @@ async fn seed_projection_corpus(
     pool: &sqlx::PgPool,
     owner: OwnerId,
     term: &str,
+    rows: i32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let owner_id = owner.into_inner();
     create_user(pool, owner.as_user()).await?;
@@ -110,7 +111,7 @@ async fn seed_projection_corpus(
            FROM generate_series(1, $2)",
     )
     .bind(owner_id)
-    .bind(CORPUS_ROWS)
+    .bind(rows)
     .execute(pool)
     .await?;
     // The stamp and the rows it promises land in one transaction.
@@ -268,9 +269,9 @@ async fn hot_path_plans_use_expected_indexes() {
         // Both predicates must be selective: our large corpus does not
         // match the word, while the neighbour's large corpus does. An
         // owner-only scan through the tag GIN would visit our whole corpus.
-        seed_projection_corpus(pool, owner, "haystack").await?;
+        seed_projection_corpus(pool, owner, "haystack", CORPUS_ROWS).await?;
         let neighbour = OwnerId::from(UserId::new(Uuid::now_v7()));
-        seed_projection_corpus(pool, neighbour, "needle").await?;
+        seed_projection_corpus(pool, neighbour, "needle", CORPUS_ROWS).await?;
         // Flush GIN pending lists before comparing settled read paths.
         sqlx::query("VACUUM (ANALYZE) proxiima_core.projection")
             .execute(pool)
@@ -344,6 +345,41 @@ async fn hot_path_plans_use_expected_indexes() {
             !lexical_plan.contains("agent_note_v1_search_tsv_gin"),
             "the per-sidecar tsvector index is gone; plan:\n{lexical_plan}"
         );
+        // Both relevance stages of the migrated function read the same
+        // composite GIN with the owner in its index condition, one with the
+        // exact query and one with the rescue query. The recency statement
+        // may walk the primary key backwards instead, as a recency single
+        // pass may: which is cheaper depends on how dense the matches are.
+        let projections = [projection.clone()];
+        let [exact, rescue, _] = staged_candidate_sql_for_tests(&projections)?;
+        for stage in [exact, rescue] {
+            let plan: serde_json::Value = sqlx::query_scalar(explain_json(stage))
+                .bind("needle haystack")
+                .bind(20_i64)
+                .bind(None::<Vec<String>>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<Uuid>)
+                .bind(&owner_ids)
+                .bind(&schema_ids)
+                .bind(true)
+                .bind(true)
+                .bind(Some("fact"))
+                .bind(false)
+                .bind("needl & haystack")
+                .bind("needl | haystack")
+                .fetch_one(&mut *tx)
+                .await?;
+            let index_cond = gin_index_cond(&plan, "core_projection_owner_tsv_gin")
+                .unwrap_or_else(|| panic!("a lexical stage must reach the composite GIN; plan:\n{plan}"));
+            assert!(
+                index_cond.contains("owner_id")
+                    && index_cond.contains("search_tsv")
+                    && index_cond.contains("@@"),
+                "a lexical stage must index the owner and the text condition; \
+                 index cond was `{index_cond}`; plan:\n{plan}"
+            );
+        }
 
         // The admit-side restriction reaches both `memory` and `memory_head`,
         // and on a corpus this size it reaches them by index.  `HeadsOnly` is
@@ -834,9 +870,34 @@ async fn candidate_head_checks_read_the_owners_heads() {
                 .await?;
             plans.push((label, plan));
         }
+        let [exact, rescue, merged] = staged_candidate_sql_for_tests(projections)?;
+        for (label, statement) in [
+            ("exact lexical stage", exact),
+            ("rescue lexical stage", rescue),
+            ("recency lexical statement", merged),
+        ] {
+            let plan: serde_json::Value = sqlx::query_scalar(explain_json(statement))
+                .bind("needle 12")
+                .bind(20_i64)
+                .bind(None::<Vec<String>>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<Uuid>)
+                .bind(vec![reader])
+                .bind(&schema_ids)
+                .bind(true)
+                .bind(true)
+                .bind(Some("fact"))
+                .bind(false)
+                .bind("needl & 12")
+                .bind("needl | 12")
+                .fetch_one(&mut *tx)
+                .await?;
+            plans.push((label, plan));
+        }
         for (label, statement, query) in [
             (
-                "lexical candidates",
+                "single-pass lexical candidates",
                 ranked_candidate_sql_for_tests(projections, false)?,
                 "needle".to_owned(),
             ),
@@ -897,6 +958,149 @@ async fn candidate_head_checks_read_the_owners_heads() {
     result.expect("candidate head-check EXPLAIN failed");
 }
 
+/// Notes only the rescue query of `alpha beta` matches…
+const RESCUE_ONLY_NOTES: i32 = 4_000;
+/// …and notes its exact query matches: more than one window.
+const EXACT_NOTES: i32 = 40;
+/// The window the lexical candidate function is asked for.
+const LEXICAL_WINDOW: i64 = 20;
+
+/// Shared buffers a statement read or hit, planning included, from its
+/// `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`. A function's own statements
+/// count toward the scan that calls it.
+fn buffers(explain: &serde_json::Value) -> i64 {
+    ["Plan", "Planning"]
+        .iter()
+        .flat_map(|part| {
+            ["Shared Hit Blocks", "Shared Read Blocks"]
+                .iter()
+                .map(move |key| explain[0][*part][*key].as_i64().unwrap_or(0))
+        })
+        .sum()
+}
+
+/// In relevance order, exact matches that fill the window end the lexical
+/// search: the function reads none of the rows only its rescue query
+/// matches. A call with rescue reads what the call without it reads, and a
+/// fraction of what the single pass, which ranked every match of either
+/// query, reads for the same request. Run as `proxiima_search` under the
+/// reader's owner scope, as the function runs.
+#[tokio::test]
+async fn exact_matches_that_fill_the_window_end_the_lexical_search() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let reader = OwnerId::from(UserId::new(Uuid::now_v7()));
+        seed_projection_corpus(pool, reader, "alpha", RESCUE_ONLY_NOTES).await?;
+        seed_projection_corpus(pool, reader, "alpha beta", EXACT_NOTES).await?;
+        sqlx::raw_sql(
+            "VACUUM (ANALYZE) proxiima_core.memory_head, proxiima_core.memory,
+                 proxiima_core.projection, proxiima_core.agent_note_v1",
+        )
+        .execute(pool)
+        .await?;
+
+        let registry = proxiima_core::SpiiceRegistry::new().freeze_or_panic_for_tests();
+        let projections = registry.search_projections();
+        let owners = vec![reader.into_inner()];
+        let schemas = vec!["core/agent-note-v1"];
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET LOCAL ROLE proxiima_search")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "SELECT set_config('app.proxiima_scope', 'owner', true),
+                    set_config('app.owner', $1, true)",
+        )
+        .bind(format!("{{{}}}", reader.into_inner()))
+        .execute(&mut *tx)
+        .await?;
+        let function = "SELECT t, schema_id, lexical_score
+                          FROM proxiima_core.search_lexical_candidates($1, $2, NULL, NULL, NULL,
+                               NULL, $3, $4, $5, false, true, 'fact', false)";
+        let mut staged = Vec::new();
+        for rescue in [true, false] {
+            let mut explain = SqlText::new("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ");
+            explain.push(function);
+            let mut read = 0;
+            // The first call warms the caches the second is measured on.
+            for _ in 0..2 {
+                let plan: serde_json::Value = sqlx::query_scalar(explain.clone())
+                    .bind("alpha beta")
+                    .bind(LEXICAL_WINDOW)
+                    .bind(&owners)
+                    .bind(&schemas)
+                    .bind(rescue)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                read = buffers(&plan);
+            }
+            staged.push(read);
+        }
+        let single_pass = ranked_candidate_sql_for_tests(projections, false)?;
+        let mut explain = SqlText::new("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ");
+        explain.push_text(&single_pass);
+        let mut single_pass_read = 0;
+        for _ in 0..2 {
+            let plan: serde_json::Value = sqlx::query_scalar(explain.clone())
+                .bind("alpha beta")
+                .bind(LEXICAL_WINDOW)
+                .bind(None::<Vec<String>>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<time::OffsetDateTime>)
+                .bind(None::<Uuid>)
+                .bind(&owners)
+                .bind(&schemas)
+                .bind(true)
+                .bind(true)
+                .bind(Some("fact"))
+                .bind(false)
+                .fetch_one(&mut *tx)
+                .await?;
+            single_pass_read = buffers(&plan);
+        }
+        let rows: Vec<(Uuid, f32)> =
+            sqlx::query_as("SELECT t, lexical_score FROM proxiima_core.search_lexical_candidates($1, $2, NULL, NULL, NULL, NULL, $3, $4, true, false, true, 'fact', false)")
+                .bind("alpha beta")
+                .bind(LEXICAL_WINDOW)
+                .bind(&owners)
+                .bind(&schemas)
+                .fetch_all(&mut *tx)
+                .await?;
+        tx.rollback().await?;
+
+        let exact_floor = note_projection()
+            .render_bands
+            .expect("core declares render bands")
+            .exact
+            .floor;
+        assert_eq!(rows.len(), usize::try_from(LEXICAL_WINDOW)?);
+        assert!(rows.iter().all(|(_, score)| *score >= exact_floor), "{rows:?}");
+        let [with_rescue, without_rescue] = staged[..] else {
+            unreachable!("two calls")
+        };
+        assert!(
+            with_rescue <= without_rescue + without_rescue / 10,
+            "a filled window runs no rescue stage: {with_rescue} buffers with rescue, \
+             {without_rescue} without"
+        );
+        assert!(
+            with_rescue * 4 <= single_pass_read,
+            "the staged call must read a fraction of the single pass: {with_rescue} \
+             buffers staged, {single_pass_read} single pass"
+        );
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("staged lexical buffers failed");
+}
+
 /// The table's primary-key columns in index order, read the way the export
 /// reads them.
 async fn primary_key(
@@ -941,7 +1145,7 @@ async fn owner_export_reaches_its_owner_through_an_index() {
             .create(&pg, owner)
             .await?;
         let neighbour = OwnerId::from(UserId::new(Uuid::now_v7()));
-        seed_projection_corpus(pool, neighbour, "neighbour").await?;
+        seed_projection_corpus(pool, neighbour, "neighbour", CORPUS_ROWS).await?;
         sqlx::raw_sql("ANALYZE proxiima_core.memory; ANALYZE proxiima_core.agent_note_v1")
             .execute(pool)
             .await?;
