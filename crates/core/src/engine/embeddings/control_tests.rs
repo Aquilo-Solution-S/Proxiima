@@ -10,7 +10,7 @@ enum Reply {
     Accept,
     Configuration(EmbeddingConfigurationFault),
     Busy(Option<Duration>),
-    Input,
+    Input(EmbeddingInputRefusal),
     LocalCap,
     WrongWidth,
     WrongCount,
@@ -42,9 +42,7 @@ impl RecordingClient {
                 retry_after,
                 message: "busy".into(),
             }),
-            Reply::Input => Err(LlmError::InputRefused(
-                EmbeddingInputRefusal::UnprocessableContent,
-            )),
+            Reply::Input(refusal) => Err(LlmError::InputRefused(refusal)),
             Reply::LocalCap => Err(LlmError::InputRefused(EmbeddingInputRefusal::LocalCap {
                 actual_chars: 2_048,
                 max_chars: 1_024,
@@ -70,6 +68,9 @@ impl EmbeddingClient for RecordingClient {
             texts.len()
         };
         Ok(vec![vector; count])
+    }
+    fn batches_requests(&self) -> bool {
+        true
     }
     fn model_id(&self) -> &'static str {
         self.model
@@ -325,7 +326,7 @@ async fn retry_after_outlives_local_cap_without_suppressed_calls_extending_it() 
     *lock(&client.reply) = Reply::Accept;
     tokio::time::advance(Duration::from_secs(3599)).await;
     assert!(
-        matches!(client_bound.embed("too early").await, Err(LlmError::Retryable { retry_after: Some(delay), .. }) if delay == Duration::from_secs(1))
+        matches!(client_bound.embed("too early").await, Err(LlmError::BackedOff { status: Some(429), retry_after: delay }) if delay == Duration::from_secs(1))
     );
     assert_eq!(client.calls.load(Ordering::SeqCst), 1);
     tokio::time::advance(Duration::from_secs(1)).await;
@@ -351,7 +352,7 @@ async fn retry_after_outlives_local_cap_without_suppressed_calls_extending_it() 
         .expect_err("huge retry delay");
     tokio::time::advance(MAX_RETRY_AFTER.saturating_sub(Duration::from_secs(1))).await;
     assert!(
-        matches!(route.current_client().expect("current").embed("still waiting").await, Err(LlmError::Retryable { retry_after: Some(delay), .. }) if delay == Duration::from_secs(1))
+        matches!(route.current_client().expect("current").embed("still waiting").await, Err(LlmError::BackedOff { retry_after: delay, .. }) if delay == Duration::from_secs(1))
     );
     assert_eq!(
         huge.calls.load(Ordering::SeqCst),
@@ -404,7 +405,7 @@ async fn a_local_input_cap_preserves_accumulated_provider_backoff() {
     let expected = policy.worker_interval() * 2;
     assert!(
         matches!(bound.embed("backed off").await,
-            Err(LlmError::Retryable { retry_after: Some(delay), .. }) if delay == expected),
+            Err(LlmError::BackedOff { retry_after: delay, .. }) if delay == expected),
         "a local refusal did not contact the provider or heal its backoff"
     );
     assert_eq!(client.calls.load(Ordering::SeqCst), 3);
@@ -488,32 +489,38 @@ async fn a_wrong_count_or_non_finite_vector_is_retryable_and_input_refusal_does_
         ));
         assert!(matches!(
             client_bound.embed("suppressed").await,
-            Err(LlmError::Retryable { .. })
+            Err(LlmError::BackedOff { status: None, .. })
         ));
         assert_eq!(client.calls.load(Ordering::SeqCst), 1);
         assert!(control.configuration_faults().is_empty());
         assert_eq!(control.blocked_pairs(Instant::now()).len(), 1);
     }
-    let control = EmbeddingControl::default();
-    let client = RecordingClient::new("input", Reply::Input);
-    let route = control.observe(
-        OwnerId::new(uuid::Uuid::now_v7()),
-        EmbeddingRoute::current(bound(&client)),
-        EmbeddingRuntimePolicy::default(),
-    );
-    assert!(matches!(
-        route
-            .current_client()
-            .expect("current")
-            .embed("refused")
-            .await,
-        Err(LlmError::InputRefused(_))
-    ));
-    assert!(control.configuration_faults().is_empty());
-    assert!(
-        control.blocked_pairs(Instant::now()).is_empty(),
-        "input rescue can proceed immediately"
-    );
+    for refusal in [
+        EmbeddingInputRefusal::PayloadTooLarge,
+        EmbeddingInputRefusal::UnprocessableContent,
+        EmbeddingInputRefusal::BadRequest,
+    ] {
+        let control = EmbeddingControl::default();
+        let client = RecordingClient::new("input", Reply::Input(refusal));
+        let route = control.observe(
+            OwnerId::new(uuid::Uuid::now_v7()),
+            EmbeddingRoute::current(bound(&client)),
+            EmbeddingRuntimePolicy::default(),
+        );
+        assert!(matches!(
+            route
+                .current_client()
+                .expect("current")
+                .embed("refused")
+                .await,
+            Err(LlmError::InputRefused(actual)) if actual == refusal
+        ));
+        assert!(control.configuration_faults().is_empty());
+        assert!(
+            control.blocked_pairs(Instant::now()).is_empty(),
+            "input rescue can proceed immediately after {refusal:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -610,7 +617,7 @@ fn concurrent_refusals_keep_the_longest_wait_and_a_configuration_pause() {
             start + Duration::from_secs(1),
         );
         assert!(
-            matches!(state.refusal(Admission::Background, start + Duration::from_secs(59)), Some(LlmError::Retryable { retry_after: Some(remaining), .. }) if remaining == Duration::from_secs(1))
+            matches!(state.refusal(Admission::Background, start + Duration::from_secs(59)), Some(LlmError::BackedOff { retry_after: remaining, .. }) if remaining == Duration::from_secs(1))
         );
         assert!(
             state
@@ -742,7 +749,7 @@ async fn a_query_passes_a_background_backoff_without_moving_it_and_stops_at_a_pa
             reply
         }
     };
-    let backed_off = |result: Result<(), LlmError>, expected: Duration| matches!(result, Err(LlmError::Retryable { retry_after: Some(remaining), .. }) if remaining == expected);
+    let backed_off = |result: Result<(), LlmError>, expected: Duration| matches!(result, Err(LlmError::BackedOff { retry_after: remaining, .. }) if remaining == expected);
     control
         .call(
             policy,
@@ -843,7 +850,7 @@ async fn a_late_success_cannot_clear_a_concurrent_refusal() {
             assert!(matches!(result, Err(LlmError::Configuration(_))));
         } else {
             assert!(
-                matches!(result, Err(LlmError::Retryable { retry_after: Some(remaining), .. }) if remaining == Duration::from_mins(1))
+                matches!(result, Err(LlmError::BackedOff { retry_after: remaining, .. }) if remaining == Duration::from_mins(1))
             );
         }
     }

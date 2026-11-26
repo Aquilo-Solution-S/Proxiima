@@ -236,7 +236,41 @@ impl OpenAiEmbeddingResponse {
     }
 }
 
+/// How a call reads a refusing status, independently of its body.
+enum StatusReading {
+    /// Refusal whose retryable form carries a bounded response-body diagnostic.
+    Diagnose(LlmError),
+    /// Refusal whose response body must not be echoed (for example, a search
+    /// query HTTP 400 whose body may repeat the rejected query text).
+    Failed(LlmError),
+    /// An indexing call's HTTP 400. OpenAI-compatible providers answer an
+    /// input over the model's context with it as well as a request the
+    /// provider cannot serve, so one sentinel probe tells them apart
+    /// ([`read_bad_request_probe`]).
+    Probe,
+}
+
 // `Proxiima.Embeddings.providerFailure`.
+fn read_status(
+    status: reqwest::StatusCode,
+    retry_after: Option<Duration>,
+    search: bool,
+) -> StatusReading {
+    if status == reqwest::StatusCode::BAD_REQUEST {
+        if !search {
+            return StatusReading::Probe;
+        }
+        return StatusReading::Failed(LlmError::Retryable {
+            status: Some(status.as_u16()),
+            retry_after,
+            message: format!("openai-compatible /embeddings returned {status}"),
+        });
+    }
+    StatusReading::Diagnose(embed_http_error(status, retry_after, ""))
+}
+
+/// What a status means alone. A search query keeps an HTTP 400 transient:
+/// it has no input to rescue and a second request would delay the search.
 fn embed_http_error(
     status: reqwest::StatusCode,
     retry_after: Option<Duration>,
@@ -245,7 +279,6 @@ fn embed_http_error(
     match status.as_u16() {
         413 => LlmError::InputRefused(EmbeddingInputRefusal::PayloadTooLarge),
         422 => LlmError::InputRefused(EmbeddingInputRefusal::UnprocessableContent),
-        400 => LlmError::Configuration(EmbeddingConfigurationFault::BadRequest),
         401 => LlmError::Configuration(EmbeddingConfigurationFault::Unauthorized),
         403 => LlmError::Configuration(EmbeddingConfigurationFault::Forbidden),
         404 => LlmError::Configuration(EmbeddingConfigurationFault::NotFound),
@@ -254,6 +287,80 @@ fn embed_http_error(
             retry_after,
             message: format!("openai-compatible /embeddings returned {status}: {body}"),
         },
+    }
+}
+
+// `Proxiima.Embeddings.badRequestProbe`.
+fn read_bad_request_probe(probe: Result<Vec<Vec<f32>>, SendFailure>) -> LlmError {
+    let refusal = match probe {
+        Ok(_) => return LlmError::InputRefused(EmbeddingInputRefusal::BadRequest),
+        Err(SendFailure::Unusable(error)) => return error,
+        Err(SendFailure::Refused(refusal)) => refusal,
+    };
+    let fault = match refusal.status.as_u16() {
+        400 => EmbeddingConfigurationFault::BadRequest,
+        401 => EmbeddingConfigurationFault::Unauthorized,
+        403 => EmbeddingConfigurationFault::Forbidden,
+        404 => EmbeddingConfigurationFault::NotFound,
+        _ => {
+            let error = LlmError::Retryable {
+                status: Some(refusal.status.as_u16()),
+                retry_after: refusal.retry_after,
+                message: format!(
+                    "openai-compatible /embeddings refused the input with 400 Bad Request, \
+                     then returned {} for a sentinel input: ",
+                    refusal.status
+                ),
+            };
+            return refusal.diagnose(error);
+        }
+    };
+    LlmError::Configuration(fault)
+}
+
+/// A one-character input any embedding model accepts, other than the
+/// refused input.
+fn sentinel(inputs: &[&str]) -> &'static str {
+    if inputs == ["a"] { "b" } else { "a" }
+}
+
+/// Why one request returned no vectors.
+enum SendFailure {
+    /// The provider answered with a status other than success. Boxed: the
+    /// response it holds would size every result.
+    Refused(Box<Refusal>),
+    /// Transport, timeout or a malformed success: retryable.
+    Unusable(LlmError),
+}
+
+/// A refusing answer. Its error body is read only as a diagnostic.
+struct Refusal {
+    status: reqwest::StatusCode,
+    retry_after: Option<Duration>,
+    response: reqwest::Response,
+}
+
+impl Refusal {
+    /// Append a bounded diagnostic to a retryable failure. Diagnostics cannot
+    /// delay an already known provider refusal, and a redirect's body is
+    /// never read.
+    fn diagnose(mut self, mut error: LlmError) -> LlmError {
+        let LlmError::Retryable { message, .. } = &mut error else {
+            return error;
+        };
+        if self.status.is_redirection() {
+            message.push_str("HTTP redirect refused: embedding client does not follow redirects");
+            return error;
+        }
+        match read_error_prefix(&mut self.response).now_or_never() {
+            Some(Ok(prefix)) => message.push_str(utf8_prefix(&prefix)),
+            Some(Err(read_error)) => {
+                write!(message, "HTTP body read: {}", read_error.without_url())
+                    .expect("write to String is infallible");
+            }
+            None => {}
+        }
+        error
     }
 }
 
@@ -361,67 +468,132 @@ impl OpenAiCompatEmbeddingClient {
 
     async fn embed_call(&self, inputs: &[&str], search: bool) -> Result<Vec<Vec<f32>>, LlmError> {
         self.refuse_over_cap(inputs)?;
+        let started = tokio::time::Instant::now();
+        let refusal = match self.send_once(inputs, search, started).await {
+            Ok(vectors) => return Ok(vectors),
+            Err(SendFailure::Unusable(error)) => return Err(error),
+            Err(SendFailure::Refused(refusal)) => refusal,
+        };
+        match read_status(refusal.status, refusal.retry_after, search) {
+            StatusReading::Diagnose(error) => Err(refusal.diagnose(error)),
+            StatusReading::Failed(error) => Err(error),
+            StatusReading::Probe => {
+                // The probe shares the call's timeout, so a direct caller
+                // waits no longer than for one request.
+                let probe = self.send_once(&[sentinel(inputs)], false, started).await;
+                Err(read_bad_request_probe(probe))
+            }
+        }
+    }
+
+    /// One `/embeddings` request, its success validated into one finite
+    /// vector of the configured width per input.
+    async fn send_once(
+        &self,
+        inputs: &[&str],
+        search: bool,
+        started: tokio::time::Instant,
+    ) -> Result<Vec<Vec<f32>>, SendFailure> {
+        let remaining = self.config.timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(SendFailure::Unusable(LlmError::retryable(format!(
+                "request timed out after {} seconds",
+                self.config.timeout.as_secs()
+            ))));
+        }
         let body = EmbedRequest {
             model: &self.model_id,
             input: inputs,
             dimensions: self.caps.matryoshka.then_some(self.caps.dim),
         };
 
-        let mut req = self.client.post(self.endpoint.clone()).json(&body);
+        let mut req = self
+            .client
+            .post(self.endpoint.clone())
+            .json(&body)
+            .timeout(remaining);
         if search {
             req = req.header(EMBEDDING_PURPOSE_HEADER, EMBEDDING_SEARCH_PURPOSE);
         }
         if let Some(token) = &self.config.bearer_token {
             req = req.bearer_auth(token);
         }
-        let mut resp = req
-            .send()
-            .await
-            .map_err(|error| LlmError::retryable(format!("HTTP send: {}", error.without_url())))?;
+        let mut resp = req.send().await.map_err(|error| {
+            SendFailure::Unusable(LlmError::retryable(format!(
+                "HTTP send: {}",
+                error.without_url()
+            )))
+        })?;
 
         let status = resp.status();
         let retry_after = retry_after_delay(resp.headers(), SystemTime::now());
-        if status.is_redirection() {
-            return Err(embed_http_error(
+        if !status.is_success() {
+            return Err(SendFailure::Refused(Box::new(Refusal {
                 status,
                 retry_after,
-                "HTTP redirect refused: embedding client does not follow redirects",
-            ));
-        }
-        if !status.is_success() {
-            let mut error = embed_http_error(status, retry_after, "");
-            if let LlmError::Retryable { message, .. } = &mut error {
-                // Diagnostics cannot delay an already known provider refusal.
-                match read_error_prefix(&mut resp).now_or_never() {
-                    Some(Ok(prefix)) => message.push_str(utf8_prefix(&prefix)),
-                    Some(Err(error)) => {
-                        write!(message, "HTTP body read: {}", error.without_url())
-                            .expect("write to String is infallible");
-                    }
-                    None => {}
-                }
-            }
-            return Err(error);
+                response: resp,
+            })));
         }
 
         let body_limit = response_body_limit(inputs.len(), self.caps.dim);
-        let body = read_body(&mut resp, body_limit).await?;
+        // Leave headroom before the call deadline so an equal-timeout outer
+        // wrapper (such as Engine's ClientControl) receives the metadata-bearing
+        // error instead of canceling the future before with_http_metadata runs.
+        let remaining_for_body = self.config.timeout.saturating_sub(started.elapsed());
+        let headroom = (remaining_for_body / 4).min(Duration::from_millis(200));
+        let body_timeout = remaining_for_body.saturating_sub(headroom);
+        let body = tokio::time::timeout(body_timeout, read_body(&mut resp, body_limit))
+            .await
+            .unwrap_or_else(|_| {
+                Err(LlmError::retryable(format!(
+                    "HTTP response body timed out after {} seconds",
+                    self.config.timeout.as_secs()
+                )))
+            })
+            .map_err(|error| with_http_metadata(error, status, retry_after))?;
         let text_body = std::str::from_utf8(&body).map_err(|error| {
-            LlmError::retryable(format!(
-                "decode OpenAI-compatible envelope as UTF-8: {error}"
-            ))
+            with_http_metadata(
+                LlmError::retryable(format!(
+                    "decode OpenAI-compatible envelope as UTF-8: {error}"
+                )),
+                status,
+                retry_after,
+            )
         })?;
         let parsed: OpenAiEmbeddingResponse = serde_json::from_str(text_body).map_err(|e| {
-            LlmError::retryable(format!(
-                "decode OpenAI-compatible envelope: {:?} at line {} column {}; body: {}",
-                e.classify(),
-                e.line(),
-                e.column(),
-                utf8_prefix(&body),
-            ))
+            with_http_metadata(
+                LlmError::retryable(format!(
+                    "decode OpenAI-compatible envelope: {:?} at line {} column {}; body: {}",
+                    e.classify(),
+                    e.line(),
+                    e.column(),
+                    utf8_prefix(&body),
+                )),
+                status,
+                retry_after,
+            )
         })?;
-        parsed.into_embeddings(inputs.len(), self.caps)
+        parsed
+            .into_embeddings(inputs.len(), self.caps)
+            .map_err(|error| with_http_metadata(error, status, retry_after))
     }
+}
+
+fn with_http_metadata(
+    mut error: LlmError,
+    status: reqwest::StatusCode,
+    retry_after: Option<Duration>,
+) -> SendFailure {
+    if let LlmError::Retryable {
+        status: slot_status,
+        retry_after: slot_retry_after,
+        ..
+    } = &mut error
+    {
+        *slot_status = Some(status.as_u16());
+        *slot_retry_after = retry_after;
+    }
+    SendFailure::Unusable(error)
 }
 
 #[async_trait]
@@ -444,6 +616,10 @@ impl EmbeddingClient for OpenAiCompatEmbeddingClient {
         }
         let inputs: Vec<&str> = texts.iter().map(String::as_str).collect();
         self.embed_call(&inputs, false).await
+    }
+
+    fn batches_requests(&self) -> bool {
+        true
     }
 
     fn model_id(&self) -> &str {

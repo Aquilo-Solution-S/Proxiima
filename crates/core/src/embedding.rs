@@ -30,6 +30,10 @@ pub enum EmbeddingInputRefusal {
     PayloadTooLarge,
     #[error("HTTP 422: embedding input cannot be processed")]
     UnprocessableContent,
+    /// HTTP 400 for this input while the same client embedded a one-character
+    /// sentinel: the request was valid, so the input was refused.
+    #[error("HTTP 400: embedding input was refused")]
+    BadRequest,
     #[error(
         "embedding input has {actual_chars} characters, exceeding the local cap of {max_chars}"
     )]
@@ -46,6 +50,7 @@ impl EmbeddingInputRefusal {
         match self {
             Self::PayloadTooLarge => Some(413),
             Self::UnprocessableContent => Some(422),
+            Self::BadRequest => Some(400),
             Self::LocalCap { .. } => None,
         }
     }
@@ -81,6 +86,14 @@ pub enum LlmError {
         status: Option<u16>,
         retry_after: Option<Duration>,
         message: String,
+    },
+    /// The engine withheld a background call while its client backs off
+    /// from an earlier failure: the provider never saw this one. `status` is
+    /// the earlier failure's, `retry_after` the backoff left.
+    #[error("embedding client is backed off")]
+    BackedOff {
+        status: Option<u16>,
+        retry_after: Duration,
     },
     #[error("internal: {0}")]
     Internal(String),
@@ -402,13 +415,24 @@ pub trait EmbeddingClient: Send + Sync + std::fmt::Debug {
 
     /// Embed several texts in one provider call, one vector per input, in
     /// input order. The default falls back to sequential single embeds so
-    /// existing impls stay correct; batching impls should override.
+    /// existing impls stay correct; batching impls should override both this
+    /// and [`Self::batches_requests`].
     async fn embed_many(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
         let mut out = Vec::with_capacity(texts.len());
         for text in texts {
             out.push(self.embed(text).await?);
         }
         Ok(out)
+    }
+
+    /// Whether [`Self::embed_many`] sends all inputs in one provider request.
+    ///
+    /// Defaults to `false` so clients relying on the sequential default settle
+    /// each job individually instead of deferring untouched tail jobs after an
+    /// earlier failure. Batching clients that override [`Self::embed_many`]
+    /// should override this to return `true`.
+    fn batches_requests(&self) -> bool {
+        false
     }
 
     fn model_id(&self) -> &str;

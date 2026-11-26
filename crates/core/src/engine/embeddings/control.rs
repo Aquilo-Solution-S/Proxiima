@@ -65,10 +65,9 @@ impl ClientState {
             (Self::Paused(fault), _) => Some(LlmError::Configuration(*fault)),
             (Self::Waiting(wait), Admission::Background) => {
                 let remaining = wait.remaining(now);
-                (!remaining.is_zero()).then(|| LlmError::Retryable {
+                (!remaining.is_zero()).then_some(LlmError::BackedOff {
                     status: wait.status,
-                    retry_after: Some(remaining),
-                    message: "embedding client is backed off".into(),
+                    retry_after: remaining,
                 })
             }
         }
@@ -79,12 +78,18 @@ impl ClientState {
             Ok(_)
             | Err(LlmError::InputRefused(
                 EmbeddingInputRefusal::PayloadTooLarge
-                | EmbeddingInputRefusal::UnprocessableContent,
+                | EmbeddingInputRefusal::UnprocessableContent
+                | EmbeddingInputRefusal::BadRequest,
             )) => {
                 *self = Self::Ready;
                 return;
             }
-            Err(LlmError::InputRefused(EmbeddingInputRefusal::LocalCap { .. })) => return,
+            // Neither reached the provider: a local cap refuses before
+            // sending, and a backed-off client withholds the call.
+            Err(
+                LlmError::InputRefused(EmbeddingInputRefusal::LocalCap { .. })
+                | LlmError::BackedOff { .. },
+            ) => return,
             Err(LlmError::Configuration(fault)) => {
                 *self = Self::Paused(*fault);
                 return;
@@ -460,6 +465,10 @@ impl EmbeddingClient for ControlledClient {
             vectors.into_iter().map(|vector| self.validate(vector)).collect()
         }).instrument(tracing::debug_span!(target: "proxiima::stage_timing", "embedding_call",
             call = %uuid::Uuid::now_v7(), client = self.control.trace_id, kind = "batch")).await
+    }
+
+    fn batches_requests(&self) -> bool {
+        self.inner.batches_requests()
     }
 
     fn model_id(&self) -> &str {

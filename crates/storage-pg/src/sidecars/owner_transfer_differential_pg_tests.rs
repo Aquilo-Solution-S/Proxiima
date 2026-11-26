@@ -749,6 +749,15 @@ pub async fn dump_database(
                 object.remove("goal_access");
                 object.remove("administers");
             }
+            if table == "embedding_jobs"
+                && let Some(object) = row.as_object_mut()
+            {
+                // 0073 gives a deferred job its queue position; the corpus
+                // defers none, and the fact-embedding drain test
+                // `a_job_the_provider_always_fails_cannot_starve_the_queue`
+                // asserts the column.
+                object.remove("retry_position");
+            }
             if table == "blob_uploads"
                 && let Some(object) = row.as_object_mut()
             {

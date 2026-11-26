@@ -311,10 +311,19 @@ standard OpenTelemetry variables (`OTEL_EXPORTER_OTLP_*`,
 The export is a push: there is no scrape endpoint.
 
 Accepted memory writes enqueue embedding work atomically without calling the
-provider. Only typed input refusals (413, 422 or a local input cap) enter chunk
-rescue and can become permanent job failures. Transient failures keep jobs
-pending and wait for backoff and any longer `Retry-After`. Configuration faults
-(400, 401, 403, 404) pause the original client shared by its owners. Replace its
+provider. Only typed input refusals (413, 422, a local input cap, or a 400 the
+HTTP adapter shows to be the input's) enter chunk rescue and can become
+permanent job failures. OpenAI-compatible providers answer an input over the
+model's context with 400, so after an indexing 400 the adapter sends one
+one-character sentinel with the same model, width and credentials: an embedded
+sentinel makes the 400 an input refusal, a sentinel refused with 400, 401, 403
+or 404 a configuration fault, and any other answer a transient failure. A
+search query's 400 is transient and sends no sentinel. Transient failures keep
+jobs pending and wait for backoff and any longer `Retry-After`. The jobs a
+failed call was for move behind every job queued before the failure, and each
+is then sent alone, so a job that fails on every attempt cannot hold back the
+rest. Configuration faults (401, 403, 404, or a 400 the sentinel draws too)
+pause the original client shared by its owners. Replace its
 binding with a new client when configuration changes; mutating the same client
 does not reset the pause. Drains observe changed routes and clear faults once
 their old bindings are no longer active. Healthy clients continue draining.

@@ -253,6 +253,17 @@ impl EmbeddingJobPort for PgStorage {
         tx.commit().await.map_err(crate::error::map_err)
     }
 
+    async fn defer_embedding_jobs(
+        &self,
+        claims: &[EmbeddingJobClaim],
+        error: &str,
+    ) -> Result<(), StorageError> {
+        let mut tx = self.platform_transaction().await?;
+        verbs::fact_embeddings::defer_embedding_jobs_on_connection(tx.as_mut(), claims, error)
+            .await?;
+        tx.commit().await.map_err(crate::error::map_err)
+    }
+
     async fn enqueue_missing_embedding_jobs(
         &self,
         permit: &OwnerWritePermit,

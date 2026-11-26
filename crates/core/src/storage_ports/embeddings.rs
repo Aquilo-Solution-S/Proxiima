@@ -249,12 +249,26 @@ pub trait EmbeddingJobPort: Send + Sync {
         error: &str,
     ) -> Result<(), StorageError>;
 
-    /// Return claimed-but-unattempted jobs to `pending`.
+    /// Return claimed-but-unattempted jobs to `pending`, in their place in
+    /// the queue.
     ///
-    /// Used when a batch embed call fails for a transient provider-side
-    /// cause. Nothing was tried, so the rows stay immediately claimable;
-    /// there is no attempt counter and no `next_attempt_at`.
+    /// Used when nothing reached the provider for them: their client is
+    /// backed off or paused, or an earlier call in their batch failed. The
+    /// rows stay immediately claimable; `error` records why they were let go.
     async fn release_embedding_jobs(
+        &self,
+        claims: &[EmbeddingJobClaim],
+        error: &str,
+    ) -> Result<(), StorageError>;
+
+    /// Return attempted jobs to `pending` behind every job queued before
+    /// them, and claim them as deferred from then on.
+    ///
+    /// Used when the provider failed them for a retryable cause. A job that
+    /// fails on every attempt then waits its turn instead of holding the
+    /// head of the queue, and there is no attempt count that would give up
+    /// on healthy jobs during a long provider outage. Atomic for the batch.
+    async fn defer_embedding_jobs(
         &self,
         claims: &[EmbeddingJobClaim],
         error: &str,

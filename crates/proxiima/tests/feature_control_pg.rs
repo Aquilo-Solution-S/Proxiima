@@ -117,6 +117,18 @@ impl EmbeddingClient for GatedEmbedding {
         self.inner.embed(text).await
     }
 
+    async fn embed_many(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
+        if self.hold_next.swap(false, Ordering::AcqRel) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.inner.embed_many(texts).await
+    }
+
+    fn batches_requests(&self) -> bool {
+        true
+    }
+
     fn model_id(&self) -> &str {
         self.inner.model_id()
     }

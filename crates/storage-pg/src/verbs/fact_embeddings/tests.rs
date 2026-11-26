@@ -127,6 +127,10 @@ mod pg_tests {
                 .collect())
         }
 
+        fn batches_requests(&self) -> bool {
+            true
+        }
+
         fn model_id(&self) -> &'static str {
             "stub-fact-embed"
         }
@@ -2142,6 +2146,14 @@ mod pg_tests {
             Err(StorageError::Unavailable("embedding release failed".into()))
         }
 
+        async fn defer_embedding_jobs(
+            &self,
+            claims: &[proxiima_core::EmbeddingJobClaim],
+            error: &str,
+        ) -> Result<(), StorageError> {
+            self.pg.defer_embedding_jobs(claims, error).await
+        }
+
         async fn enqueue_missing_embedding_jobs(
             &self,
             permit: &OwnerWritePermit,
@@ -2231,6 +2243,332 @@ mod pg_tests {
         .await?;
         assert_eq!(reclaim_stale_embedding_jobs(pool, lease).await?, 1);
         assert_eq!(job_state(pool, id).await?.0, "pending");
+        Ok(())
+    }
+
+    /// A provider shared by every Owner: it fails any call carrying `POISON`
+    /// with HTTP 502 on every attempt, and refuses a text over `max_chars`
+    /// the way the HTTP adapter reports an HTTP 400 its sentinel probe showed
+    /// to be the input's.
+    #[derive(Debug)]
+    struct ProviderStub {
+        max_chars: usize,
+    }
+
+    impl ProviderStub {
+        fn answer(&self, text: &str) -> Result<Vec<f32>, LlmError> {
+            if text.contains("POISON") {
+                return Err(LlmError::Retryable {
+                    status: Some(502),
+                    retry_after: None,
+                    message: "bad gateway".into(),
+                });
+            }
+            if text.chars().count() > self.max_chars {
+                return Err(LlmError::InputRefused(EmbeddingInputRefusal::BadRequest));
+            }
+            Ok(padded_embedding([0.1, 0.2, 0.3]))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingClient for ProviderStub {
+        async fn embed(&self, text: &str) -> Result<Vec<f32>, LlmError> {
+            self.answer(text)
+        }
+
+        async fn embed_many(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
+            texts.iter().map(|text| self.answer(text)).collect()
+        }
+
+        fn batches_requests(&self) -> bool {
+            true
+        }
+
+        fn model_id(&self) -> &'static str {
+            "stub-fact-embed"
+        }
+
+        fn dim(&self) -> usize {
+            EMBEDDING_DIM
+        }
+    }
+
+    /// An engine over `pg`, configured with the core registry, whose drain
+    /// sends `batch_size` jobs per call to `provider`. A new engine starts
+    /// with the provider's client ready, as one does once a backoff has run
+    /// out.
+    fn provider_engine(
+        pg: &Arc<crate::PgStorage>,
+        provider: &Arc<ProviderStub>,
+        batch_size: usize,
+    ) -> Result<Engine, Box<dyn std::error::Error>> {
+        let defaults = EmbeddingRuntimePolicy::default();
+        let policy = EmbeddingRuntimePolicy::new(
+            defaults.request_timeout(),
+            batch_size,
+            defaults.worker_interval(),
+            defaults.stale_claim_timeout(),
+        )?;
+        let client: Arc<dyn EmbeddingClient> = provider.clone();
+        Ok(Engine::new_or_panic_for_tests(
+            SpiiceRegistry::new().freeze_or_panic_for_tests(),
+            pg.clone().storage_ports(),
+        )
+        .with_embedding_router(Arc::new(SingleClientRouter::bind(client)?))
+        .with_embedding_runtime_policy(policy))
+    }
+
+    /// A note of `owner` with its job queued after every job before it.
+    async fn queued_note(
+        pg: &crate::PgStorage,
+        owner: OwnerId,
+        body: &str,
+    ) -> Result<Uuid, Box<dyn std::error::Error>> {
+        let note = crate::test_fixtures::TestNote::new("queued note", body)
+            .create(pg, owner)
+            .await?;
+        let id = note.memory_id.into_inner();
+        crate::test_fixtures::enqueue_embedding_job(pg, owner, id, STUB_SPACE.model_id()).await?;
+        Ok(id)
+    }
+
+    async fn retry_position(
+        pool: &sqlx::PgPool,
+        entity_id: Uuid,
+    ) -> Result<Option<Uuid>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT retry_position FROM proxiima_core.embedding_jobs WHERE entity_id = $1",
+        )
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await
+    }
+
+    /// The oldest job fails on every attempt while three Owners share its
+    /// client. Its batch partner, the jobs its backoff withheld, and every
+    /// later job still drain; the failing job waits at the back.
+    #[tokio::test]
+    async fn a_job_the_provider_always_fails_cannot_starve_the_queue()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, _database) = fresh_pg("proxiima_embed_fair").await;
+        let pg = Arc::new(pg.with_spiices(&SpiiceRegistry::new().freeze_or_panic_for_tests()));
+        let pool = pg.pool_for_tests();
+        let provider = Arc::new(ProviderStub {
+            max_chars: MIN_EMBED_INPUT_CAP_CHARS,
+        });
+        let [x, y, z] = [(); 3].map(|()| OwnerId::from(proxiima_core::UserId::new(Uuid::now_v7())));
+        for owner in [x, y, z] {
+            crate::test_fixtures::create_user(pool, owner.as_user()).await?;
+        }
+        let poison = queued_note(&pg, x, "POISON fails on every attempt").await?;
+        let partner = queued_note(&pg, x, "shares the poison's first call").await?;
+        let withheld = [
+            queued_note(&pg, y, "withheld by the backoff").await?,
+            queued_note(&pg, y, "withheld as well").await?,
+        ];
+        let mut later = Vec::new();
+        for (index, owner) in [z, x, y, z, x, y, z, x].into_iter().enumerate() {
+            later.push(queued_note(&pg, owner, &format!("later note {index}")).await?);
+        }
+
+        // The first call holds the poison and its partner. The provider
+        // fails it, so the shared client backs off and withholds the call
+        // for the next Owner, whose jobs keep their place.
+        let drained = provider_engine(&pg, &provider, 4)?
+            .drain_embedding_jobs(100)
+            .await?;
+        assert_eq!(drained.processed, 0);
+        let poison_first = retry_position(pool, poison)
+            .await?
+            .expect("poison deferred");
+        let partner_first = retry_position(pool, partner)
+            .await?
+            .expect("partner deferred");
+        assert!(poison_first < partner_first, "deferral keeps claim order");
+        let (status, error, _) = job_state(pool, poison).await?;
+        assert_eq!(status, "pending");
+        assert!(error.is_some_and(|error| error.contains("bad gateway")));
+        for id in withheld {
+            assert_eq!(
+                retry_position(pool, id).await?,
+                None,
+                "withheld, never sent"
+            );
+            assert_eq!(job_state(pool, id).await?.0, "pending");
+        }
+
+        // Every job queued before the deferral drains ahead of the two
+        // deferred ones. The poison, sent alone, fails only itself and
+        // moves back again; its partner keeps its place.
+        let drained = provider_engine(&pg, &provider, 4)?
+            .drain_embedding_jobs(100)
+            .await?;
+        assert_eq!(drained.processed, withheld.len() + later.len());
+        for id in withheld.iter().chain(&later) {
+            assert_eq!(count_jobs(pool, *id).await?, 0, "drained");
+        }
+        let poison_second = retry_position(pool, poison).await?.expect("deferred again");
+        assert!(poison_second > partner_first);
+        assert_eq!(retry_position(pool, partner).await?, Some(partner_first));
+
+        let drained = provider_engine(&pg, &provider, 4)?
+            .drain_embedding_jobs(100)
+            .await?;
+        assert_eq!((drained.processed, drained.failed), (1, 0));
+        assert_eq!(count_jobs(pool, partner).await?, 0);
+        for id in withheld.iter().chain(&later).chain([&partner]) {
+            assert_eq!(
+                count_fact_embeddings(pool, MemoryId::new(*id)).await?,
+                1,
+                "{id} embedded"
+            );
+        }
+        assert_eq!(job_state(pool, poison).await?.0, "pending");
+        assert!(retry_position(pool, poison).await? > Some(poison_second));
+        Ok(())
+    }
+
+    #[derive(Debug, Default)]
+    struct SequentialProviderStub {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingClient for SequentialProviderStub {
+        async fn embed(&self, text: &str) -> Result<Vec<f32>, LlmError> {
+            self.seen
+                .lock()
+                .expect("test lock is not poisoned")
+                .push(text.to_owned());
+            if text.contains("FAIL") {
+                return Err(LlmError::Retryable {
+                    status: Some(502),
+                    retry_after: None,
+                    message: "bad gateway".into(),
+                });
+            }
+            Ok(padded_embedding([0.1, 0.2, 0.3]))
+        }
+
+        fn model_id(&self) -> &'static str {
+            "stub-fact-embed"
+        }
+
+        fn dim(&self) -> usize {
+            EMBEDDING_DIM
+        }
+    }
+
+    /// A client using the sequential `EmbeddingClient::embed_many` default
+    /// settles each fresh job individually: work before a retryable failure is
+    /// stored, only the failing job is deferred, and untouched tail jobs keep
+    /// their fresh queue position without being sent.
+    #[tokio::test]
+    async fn a_sequential_client_settles_and_defers_each_job_individually()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, _database) = fresh_pg("proxiima_embed_seq").await;
+        let pg = Arc::new(pg.with_spiices(&SpiiceRegistry::new().freeze_or_panic_for_tests()));
+        let pool = pg.pool_for_tests();
+        let owner = owner_fixture();
+        let provider = Arc::new(SequentialProviderStub::default());
+        let first = queued_note(&pg, owner, "first healthy note").await?;
+        let failing = queued_note(&pg, owner, "FAIL mid-batch note").await?;
+        let untouched = queued_note(&pg, owner, "untouched tail note").await?;
+
+        let build_engine = || -> Result<Engine, Box<dyn std::error::Error>> {
+            let defaults = EmbeddingRuntimePolicy::default();
+            let policy = EmbeddingRuntimePolicy::new(
+                defaults.request_timeout(),
+                4,
+                defaults.worker_interval(),
+                defaults.stale_claim_timeout(),
+            )?;
+            let client: Arc<dyn EmbeddingClient> = provider.clone();
+            Ok(Engine::new_or_panic_for_tests(
+                SpiiceRegistry::new().freeze_or_panic_for_tests(),
+                pg.clone().storage_ports(),
+            )
+            .with_embedding_router(Arc::new(SingleClientRouter::bind(client)?))
+            .with_embedding_runtime_policy(policy))
+        };
+
+        let drained = build_engine()?.drain_embedding_jobs(100).await?;
+        assert_eq!((drained.processed, drained.failed), (1, 0));
+        assert_eq!(count_jobs(pool, first).await?, 0);
+        assert_eq!(count_fact_embeddings(pool, MemoryId::new(first)).await?, 1);
+        let failing_first = retry_position(pool, failing)
+            .await?
+            .expect("failing job deferred");
+        assert_eq!(job_state(pool, failing).await?.0, "pending");
+        assert_eq!(
+            retry_position(pool, untouched).await?,
+            None,
+            "untouched tail job must keep its fresh position"
+        );
+        assert_eq!(job_state(pool, untouched).await?.0, "pending");
+        {
+            let seen = provider.seen.lock().expect("test lock is not poisoned");
+            assert_eq!(seen.len(), 2, "untouched tail job must never be sent");
+            assert!(seen[0].contains("first healthy note"));
+            assert!(seen[1].contains("FAIL mid-batch note"));
+        }
+
+        // After the backoff window passes, the untouched fresh job drains ahead
+        // of the deferred failing job.
+        let drained = build_engine()?.drain_embedding_jobs(100).await?;
+        assert_eq!((drained.processed, drained.failed), (1, 0));
+        assert_eq!(count_jobs(pool, untouched).await?, 0);
+        assert_eq!(
+            count_fact_embeddings(pool, MemoryId::new(untouched)).await?,
+            1
+        );
+        assert_eq!(job_state(pool, failing).await?.0, "pending");
+        assert!(retry_position(pool, failing).await? > Some(failing_first));
+        Ok(())
+    }
+
+    /// An input the provider refuses with a validated HTTP 400 is embedded
+    /// in pieces beside its batch, and the client stays ready for the next
+    /// job.
+    #[tokio::test]
+    async fn a_bad_request_input_refusal_is_rescued_without_holding_the_client_back()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (pg, _database) = fresh_pg("proxiima_embed_400").await;
+        let pg = Arc::new(pg.with_spiices(&SpiiceRegistry::new().freeze_or_panic_for_tests()));
+        let pool = pg.pool_for_tests();
+        let owner = owner_fixture();
+        let provider = Arc::new(ProviderStub {
+            max_chars: MIN_EMBED_INPUT_CAP_CHARS,
+        });
+        let mut notes = Vec::new();
+        for index in 0..5 {
+            notes.push(queued_note(&pg, owner, &format!("short note {index}")).await?);
+        }
+        let long = queued_note(&pg, owner, &"long ".repeat(MIN_EMBED_INPUT_CAP_CHARS)).await?;
+        for index in 5..10 {
+            notes.push(queued_note(&pg, owner, &format!("short note {index}")).await?);
+        }
+        let engine = provider_engine(&pg, &provider, 32)?;
+
+        let drained = engine.drain_embedding_jobs(100).await?;
+        assert_eq!((drained.processed, drained.failed), (11, 0));
+        assert!(drained.configuration_faults.is_empty());
+        assert!(count_fact_embeddings(pool, MemoryId::new(long)).await? > 1);
+        assert_chunk_ordinals(
+            pool,
+            MemoryId::new(long),
+            usize::try_from(count_fact_embeddings(pool, MemoryId::new(long)).await?)?,
+        )
+        .await?;
+        for id in notes {
+            assert_eq!(count_fact_embeddings(pool, MemoryId::new(id)).await?, 1);
+        }
+
+        let next = queued_note(&pg, owner, "after the rescue").await?;
+        let drained = engine.drain_embedding_jobs(100).await?;
+        assert_eq!(drained.processed, 1, "a backed-off client would skip it");
+        assert_eq!(count_jobs(pool, next).await?, 0);
         Ok(())
     }
 

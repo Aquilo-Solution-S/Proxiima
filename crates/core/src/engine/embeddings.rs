@@ -36,7 +36,7 @@ enum EmbedStep {
 enum DrainAction {
     Publish(Vec<Vec<f32>>),
     Rescue(EmbeddingInputRefusal),
-    Release(LlmError),
+    Stop(Stop),
 }
 
 // `Proxiima.Embeddings.drainAction`.
@@ -44,9 +44,71 @@ fn drain_action(result: Result<Vec<Vec<f32>>, LlmError>) -> DrainAction {
     match result {
         Ok(vectors) => DrainAction::Publish(vectors),
         Err(LlmError::InputRefused(refusal)) => DrainAction::Rescue(refusal),
-        Err(
-            err @ (LlmError::Retryable { .. } | LlmError::Internal(_) | LlmError::Configuration(_)),
-        ) => DrainAction::Release(err),
+        Err(err) => DrainAction::Stop(Stop::of(err)),
+    }
+}
+
+/// How a provider failure leaves the claims its call was for. The claims
+/// after them in the batch were not sent and keep their place.
+enum Stop {
+    /// The provider failed the call: its claims wait behind the queue.
+    Defer(LlmError),
+    /// Nothing reached the provider, or its configuration is at fault: the
+    /// claims keep their place.
+    Release(LlmError),
+}
+
+impl Stop {
+    // `Proxiima.Embeddings.drainAction`, past publication and rescue. Rescue
+    // settles every input refusal as coverage or a terminal failure first,
+    // so one that arrives here keeps its claims in place.
+    fn of(error: LlmError) -> Self {
+        match error {
+            LlmError::Retryable { .. } | LlmError::Internal(_) => Self::Defer(error),
+            LlmError::Configuration(_) | LlmError::BackedOff { .. } | LlmError::InputRefused(_) => {
+                Self::Release(error)
+            }
+        }
+    }
+}
+
+/// Where a provider failure stopped a batch.
+struct Stopped {
+    /// The claims the failed call was for.
+    sent: Vec<EmbeddingJobClaim>,
+    stop: Stop,
+    /// The batch's claims after them, never sent.
+    unsent: Vec<EmbeddingJobClaim>,
+}
+
+/// Claims in queue order as the drain sends them: consecutive fresh claims
+/// in one call, a deferred claim alone, so a job the provider failed before
+/// cannot fail other jobs' call again.
+enum ClaimRun {
+    Fresh(Vec<(EmbeddingJobClaim, String)>),
+    Deferred((EmbeddingJobClaim, String)),
+}
+
+impl ClaimRun {
+    fn split(batch: Vec<(EmbeddingJobClaim, String)>) -> Vec<Self> {
+        let mut runs: Vec<Self> = Vec::new();
+        for item in batch {
+            if item.0.deferred {
+                runs.push(Self::Deferred(item));
+            } else if let Some(Self::Fresh(fresh)) = runs.last_mut() {
+                fresh.push(item);
+            } else {
+                runs.push(Self::Fresh(vec![item]));
+            }
+        }
+        runs
+    }
+
+    fn into_claims(self) -> Vec<EmbeddingJobClaim> {
+        match self {
+            Self::Fresh(items) => items.into_iter().map(|(claim, _)| claim).collect(),
+            Self::Deferred((claim, _)) => vec![claim],
+        }
     }
 }
 
@@ -306,8 +368,9 @@ impl Engine {
     ///
     /// Blocked clients release unsettled work and do not block other spaces.
     /// Only typed input refusals enter isolation and complete-coverage chunk
-    /// rescue. Their final minimum-size refusal goes terminal; retryable and
-    /// configuration failures retain pending work.
+    /// rescue. Their final minimum-size refusal goes terminal. A retryable
+    /// failure defers the jobs its call was for behind the queue; a
+    /// configuration fault releases them in place. Both keep pending work.
     ///
     /// # Errors
     ///
@@ -316,7 +379,7 @@ impl Engine {
     /// of its outstanding claims. A failed release leaves them for lease expiry.
     /// See `Proxiima.Embeddings.claimRecovery`.
     /// Completed jobs and terminal input refusals count as processed;
-    /// released jobs do not. Active observed configuration faults are
+    /// released and deferred jobs do not. Active observed configuration faults are
     /// returned even when no job completed.
     pub async fn drain_embedding_jobs(
         &self,
@@ -560,18 +623,50 @@ impl Engine {
             .await
     }
 
-    /// A one-item batch can reuse its refusal without submitting the full
-    /// input again.
+    /// Embed one Owner's claims in one space, run by run in queue order
+    /// ([`ClaimRun`]). The first provider failure ends the batch.
     async fn embed_claim_batch(
         &self,
         client: &BoundEmbeddingClient,
         batch: Vec<(EmbeddingJobClaim, String)>,
         outcome: &mut EmbeddingDrainOutcome,
     ) -> Result<(), StorageError> {
-        let texts: Vec<String> = batch.iter().map(|(_, text)| text.clone()).collect();
+        let mut runs = ClaimRun::split(batch).into_iter();
+        while let Some(run) = runs.next() {
+            let stopped = match run {
+                ClaimRun::Fresh(items) => self.embed_fresh_run(client, items, outcome).await?,
+                ClaimRun::Deferred(item) => {
+                    self.embed_claims_individually(client, vec![item], None, outcome)
+                        .await?
+                }
+            };
+            if let Some(mut stopped) = stopped {
+                stopped.unsent.extend(runs.flat_map(ClaimRun::into_claims));
+                return self.settle_stopped(stopped).await;
+            }
+        }
+        Ok(())
+    }
+
+    /// One provider call for consecutive fresh claims when the client submits
+    /// a batch in one request; otherwise settles each job individually so an
+    /// error mid-run never defers untouched jobs after it. A one-claim run
+    /// reuses its refusal without submitting the full input again.
+    async fn embed_fresh_run(
+        &self,
+        client: &BoundEmbeddingClient,
+        run: Vec<(EmbeddingJobClaim, String)>,
+        outcome: &mut EmbeddingDrainOutcome,
+    ) -> Result<Option<Stopped>, StorageError> {
+        if !client.batches_requests() {
+            return self
+                .embed_claims_individually(client, run, None, outcome)
+                .await;
+        }
+        let texts: Vec<String> = run.iter().map(|(_, text)| text.clone()).collect();
         match drain_action(client.embed_many(&texts).await) {
             DrainAction::Publish(vectors) => {
-                let stored: Vec<_> = batch
+                let stored: Vec<_> = run
                     .iter()
                     .zip(vectors)
                     .map(|((claim, _), vector)| (claim, vec![vector]))
@@ -579,28 +674,45 @@ impl Engine {
                 let count = stored.len();
                 self.store_claim_embeddings(client, stored).await?;
                 outcome.processed += count;
-                Ok(())
+                Ok(None)
             }
             DrainAction::Rescue(refusal) => {
-                let known_refusal = (batch.len() == 1).then_some(refusal);
-                self.embed_claims_individually(client, batch, known_refusal, outcome)
+                let known_refusal = (run.len() == 1).then_some(refusal);
+                self.embed_claims_individually(client, run, known_refusal, outcome)
                     .await
             }
-            DrainAction::Release(err) => self.release_embedding_batch(batch, &err).await,
+            DrainAction::Stop(stop) => Ok(Some(Stopped {
+                sent: run.into_iter().map(|(claim, _)| claim).collect(),
+                stop,
+                unsent: Vec::new(),
+            })),
         }
     }
 
-    async fn release_embedding_batch(
-        &self,
-        batch: Vec<(EmbeddingJobClaim, String)>,
-        error: &LlmError,
-    ) -> Result<(), StorageError> {
-        let claims: Vec<EmbeddingJobClaim> = batch.into_iter().map(|(claim, _)| claim).collect();
-        self.storage
-            .ingest
-            .embedding_job
-            .release_embedding_jobs(&claims, &format!("embed memory text: {error}"))
-            .await
+    /// Defer or release the claims a failure stopped at, and release the
+    /// claims after them.
+    async fn settle_stopped(&self, stopped: Stopped) -> Result<(), StorageError> {
+        let jobs = &self.storage.ingest.embedding_job;
+        let Stopped {
+            mut sent,
+            stop,
+            unsent,
+        } = stopped;
+        match stop {
+            Stop::Defer(error) => {
+                let reason = format!("embed memory text: {error}");
+                jobs.defer_embedding_jobs(&sent, &reason).await?;
+                if unsent.is_empty() {
+                    return Ok(());
+                }
+                jobs.release_embedding_jobs(&unsent, &reason).await
+            }
+            Stop::Release(error) => {
+                sent.extend(unsent);
+                jobs.release_embedding_jobs(&sent, &format!("embed memory text: {error}"))
+                    .await
+            }
+        }
     }
 
     /// Reclaim once per `Proxiima.Embeddings.heartbeatDivisor` interval,
@@ -665,15 +777,16 @@ impl Engine {
         Ok(())
     }
 
-    /// Isolate an input-refused batch. A later non-input failure releases
-    /// the current and remaining jobs, preserving complete coverage.
+    /// Isolate an input-refused batch, or send a deferred claim alone. A
+    /// later non-input failure stops at the current job, preserving complete
+    /// coverage; the jobs after it were not sent.
     async fn embed_claims_individually(
         &self,
         client: &BoundEmbeddingClient,
         batch: Vec<(EmbeddingJobClaim, String)>,
         mut known_refusal: Option<EmbeddingInputRefusal>,
         outcome: &mut EmbeddingDrainOutcome,
-    ) -> Result<(), StorageError> {
+    ) -> Result<Option<Stopped>, StorageError> {
         let mut pending = batch.into_iter();
         while let Some((claim, text)) = pending.next() {
             let attempt = match known_refusal.take() {
@@ -707,13 +820,15 @@ impl Engine {
                     outcome.failed += 1;
                 }
                 Err(err) => {
-                    let mut unsettled = vec![(claim, text)];
-                    unsettled.extend(pending);
-                    return self.release_embedding_batch(unsettled, &err).await;
+                    return Ok(Some(Stopped {
+                        sent: vec![claim],
+                        stop: Stop::of(err),
+                        unsent: pending.map(|(claim, _)| claim).collect(),
+                    }));
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Host-invoked reconciliation: enqueue durable embedding jobs for

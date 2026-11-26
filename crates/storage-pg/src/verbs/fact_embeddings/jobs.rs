@@ -11,14 +11,17 @@ use crate::pg_enums::PgMemoryKind;
 use super::ensure_nonnegative_limit;
 use crate::sidecars::int_to_u64;
 
-/// `Proxiima.Embeddings.claimEligible`. Claims span spaces in `job_id` order.
-/// The UPDATE returns rows in plan order, so the answer is ordered by an
-/// outer `SELECT`: a drain that groups the claims works through the Owners in
-/// queue order whatever plan the UPDATE ran under.
+/// `Proxiima.Embeddings.claimEligible`. Claims span spaces in queue order: a
+/// job waits at its `job_id` until a deferral gives it a `retry_position`
+/// behind the jobs queued before it. The UPDATE returns rows in plan order,
+/// so the answer is ordered by an outer `SELECT`: a drain that groups the
+/// claims works through the Owners in queue order whatever plan the UPDATE
+/// ran under.
 ///
 /// One arm: `status = 'pending'`, minus failed-route Owners and exact
-/// Owner/space pairs whose clients are blocked. Rides `embedding_jobs_pending_claim_idx (job_id) WHERE status =
-/// 'pending'`. Locked unclaimed rows release with the statement's
+/// Owner/space pairs whose clients are blocked. Rides
+/// `embedding_jobs_pending_claim_idx (COALESCE(retry_position, job_id), job_id)
+/// WHERE status = 'pending'`. Locked unclaimed rows release with the statement's
 /// transaction. `claimed_at` is what makes a crashed drainer's row
 /// recoverable ([`reclaim_stale_embedding_jobs`]); there is no
 /// `next_attempt_at` column. Each claim also gets a fencing token so a
@@ -38,7 +41,7 @@ const CLAIM_EMBEDDING_JOBS_SQL: &str = "WITH claimed AS (
                       AND blocked.model_id = embedding_jobs.model_id
                       AND blocked.dim = embedding_jobs.dim
                 )
-              ORDER BY job_id ASC
+              ORDER BY COALESCE(retry_position, job_id) ASC, job_id ASC
               FOR UPDATE SKIP LOCKED
               LIMIT $1
          )
@@ -57,11 +60,13 @@ const CLAIM_EMBEDDING_JOBS_SQL: &str = "WITH claimed AS (
                   j.entity_id,
                   j.model_id,
                   j.dim,
-                  j.claim_token
+                  j.claim_token,
+                  j.retry_position
          )
-         SELECT job_id, owner_id, entity_kind, entity_id, model_id, dim, claim_token
+         SELECT job_id, owner_id, entity_kind, entity_id, model_id, dim, claim_token,
+                retry_position IS NOT NULL AS deferred
            FROM settled
-          ORDER BY job_id";
+          ORDER BY COALESCE(retry_position, job_id), job_id";
 
 /// The claim statement, for EXPLAIN-based plan guards. Same cfg gate as
 /// `search.rs`'s `*_sql_for_tests` exports.
@@ -101,6 +106,7 @@ struct EmbeddingJobClaimRow {
     model_id: String,
     dim: i16,
     claim_token: uuid::Uuid,
+    deferred: bool,
 }
 
 impl TryFrom<EmbeddingJobClaimRow> for EmbeddingJobClaim {
@@ -114,6 +120,7 @@ impl TryFrom<EmbeddingJobClaimRow> for EmbeddingJobClaim {
             entity_id: MemoryId::new(row.entity_id),
             space: crate::pgvector::stored_space(row.model_id, row.dim)?,
             claim_token: row.claim_token,
+            deferred: row.deferred,
         })
     }
 }
@@ -313,8 +320,11 @@ enum ClaimExit {
     Failed,
     /// The provider rejects the input for a permanent cause.
     FailedPermanent,
-    /// Claimed but not attempted: claimable again at once.
+    /// Claimed but not attempted: claimable again at once, in its place.
     Released,
+    /// Attempted and failed for a retryable cause: claimable again behind
+    /// every job queued before now.
+    Deferred,
 }
 
 impl ClaimExit {
@@ -322,7 +332,15 @@ impl ClaimExit {
         match self {
             Self::Failed => EmbeddingJobState::Failed { last_error: None },
             Self::FailedPermanent => EmbeddingJobState::FailedPermanent { last_error: None },
-            Self::Released => EmbeddingJobState::Pending,
+            Self::Released | Self::Deferred => EmbeddingJobState::Pending,
+        }
+    }
+
+    /// Whether the job takes a new queue position.
+    const fn requeues(self) -> bool {
+        match self {
+            Self::Deferred => true,
+            Self::Failed | Self::FailedPermanent | Self::Released => false,
         }
     }
 }
@@ -340,7 +358,8 @@ async fn exit_claim<'e, E: PgExecutor<'e>>(
                 SET status = $7::proxiima_core.embedding_job_status,
                     claimed_at = NULL,
                     claim_token = NULL,
-                    last_error = $8
+                    last_error = $8,
+                    retry_position = CASE WHEN $9 THEN uuidv7() ELSE retry_position END
               WHERE ",
             claim_fence!()
         )),
@@ -348,6 +367,7 @@ async fn exit_claim<'e, E: PgExecutor<'e>>(
     )
     .bind(exit.status())
     .bind(error)
+    .bind(exit.requeues())
     .execute(pool)
     .await
     .map_err(map_err)?;
@@ -463,10 +483,10 @@ pub async fn fail_embedding_job_permanently<'e, E: PgExecutor<'e>>(
     exit_claim(pool, claim, ClaimExit::FailedPermanent, error).await
 }
 
-/// Return claimed-but-unattempted jobs to `pending`.
+/// Return claimed-but-unattempted jobs to `pending`, keeping their queue
+/// positions.
 ///
-/// Batch-drain uses this when one provider call covering many jobs
-/// fails for a transient cause. Nothing was tried, so the rows are
+/// The drain uses this for jobs nothing reached the provider for. They are
 /// immediately claimable again; `error` records why they were let go.
 ///
 /// # Errors
@@ -491,8 +511,34 @@ pub async fn release_embedding_jobs_on_connection(
     claims: &[EmbeddingJobClaim],
     error: &str,
 ) -> Result<(), StorageError> {
+    exit_claims(pool, claims, ClaimExit::Released, error).await
+}
+
+/// Return attempted jobs the provider failed for a retryable cause to
+/// `pending`, each at a new queue position behind every job queued before
+/// it, in claim order. `error` is kept on the row.
+///
+/// # Errors
+///
+/// Returns `Conflict` when any claim is stale/non-processing; maps SQL
+/// failures through the shared mapper. The caller's transaction makes the
+/// batch atomic.
+pub async fn defer_embedding_jobs_on_connection(
+    pool: &mut PgConnection,
+    claims: &[EmbeddingJobClaim],
+    error: &str,
+) -> Result<(), StorageError> {
+    exit_claims(pool, claims, ClaimExit::Deferred, error).await
+}
+
+async fn exit_claims(
+    pool: &mut PgConnection,
+    claims: &[EmbeddingJobClaim],
+    exit: ClaimExit,
+    error: &str,
+) -> Result<(), StorageError> {
     for claim in claims {
-        exit_claim(&mut *pool, claim, ClaimExit::Released, error).await?;
+        exit_claim(&mut *pool, claim, exit, error).await?;
     }
     Ok(())
 }
@@ -911,6 +957,7 @@ mod tests {
             entity_id: MemoryId::new(uuid::Uuid::from_u128(3)),
             space: EmbeddingSpace::new("model", proxiima_core::EmbeddingDim::D768),
             claim_token: uuid::Uuid::from_u128(4),
+            deferred: false,
         };
         assert_eq!(claim.space.model_id(), "model");
     }

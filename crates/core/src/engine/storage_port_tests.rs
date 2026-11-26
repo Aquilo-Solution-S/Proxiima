@@ -435,6 +435,14 @@ mod storage_port_tests_support {
             Ok(())
         }
 
+        async fn defer_embedding_jobs(
+            &self,
+            _claims: &[crate::storage::EmbeddingJobClaim],
+            _error: &str,
+        ) -> Result<(), StorageError> {
+            Ok(())
+        }
+
         async fn enqueue_missing_embedding_jobs(
             &self,
             _permit: &crate::storage_ports::OwnerWritePermit,
