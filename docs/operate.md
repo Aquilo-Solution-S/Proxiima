@@ -406,29 +406,34 @@ PROXIIMA_SCALE_ERASE_MEMORIES=11000 \
 Each search is one `search_memories` call with a limit of 10 for one of three
 owners holding 1 %, 10 % and 89 % of the corpus; recall is the overlap with the
 exact ten nearest of that owner. One run on PostgreSQL 18.6 with pgvector
-0.8.6, `max_connections` 200 and `fsync` off, on a machine that did other work,
-with 200,000 embeddings and 50 queries per cell:
+0.8.7, `max_connections` 200 and `fsync` off, on a machine that did other work,
+after `VACUUM ANALYZE`, with 200,000 embeddings and 50 queries per cell:
 
 | Owner rows | `ef_search` | Iterative scan | Recall@10 | Mean ms | p95 ms |
 |---|---|---|---|---|---|
-| 2,000 | 100 | relaxed order | 1.000 | 12.5 | 16.8 |
-| 20,000 | 100 | relaxed order | 0.996 | 59.9 | 130.6 |
-| 20,000 | 400 | relaxed order | 0.994 | 46.5 | 52.4 |
-| 178,000 | 100 | relaxed order | 0.864 | 21.0 | 24.0 |
-| 178,000 | 100 | strict order | 0.658 | 21.2 | 26.8 |
-| 178,000 | 100 | off | 1.000 | 448.9 | 462.7 |
-| 178,000 | 400 | relaxed order | 0.892 | 22.4 | 27.9 |
-| 178,000 | 400 | off | 0.892 | 22.2 | 29.5 |
+| 2,000 | 100 | relaxed order | 1.000 | 13.9 | 15.8 |
+| 20,000 | 100 | relaxed order | 1.000 | 51.2 | 54.9 |
+| 20,000 | 400 | relaxed order | 1.000 | 51.3 | 55.8 |
+| 178,000 | 100 | relaxed order | 0.862 | 29.3 | 34.0 |
+| 178,000 | 100 | strict order | 0.654 | 30.2 | 34.2 |
+| 178,000 | 100 | off | 1.000 | 285.4 | 296.6 |
+| 178,000 | 400 | relaxed order | 0.886 | 30.6 | 37.4 |
+| 178,000 | 400 | off | 0.886 | 30.4 | 37.7 |
 
 The first, second and fourth rows are the default tuning. The vectors are
 synthetic (16 cluster centers plus seeded noise, 384 wide), not text
 embeddings, and this is one run: the table shows how the filtered index scan
 behaves on that geometry and says nothing about retrieval quality on real text.
-The candidate function answers from an exact scan of the owner when the index
-scan returns fewer rows than the search asked for, here 200. That scan is the
-448 ms row: with iterative scan off the index returns at most `ef_search` rows,
-and 100 is fewer than 200; at 400 it is not, and the row beside it shows the
-index answering.
+The candidate function scores the owner's chunks directly in one exact pass
+when they fit its exact-scan budget (expected for the 2,000- and 20,000-row
+owners here, which both reach recall 1.000 at every setting), and walks the
+HNSW index past that budget, falling back to the exact scan when the walk
+returns fewer memories than the search asked for (here 200). With iterative
+scan off, an HNSW scan at `ef_search` 100 returns at most 100 rows and is
+therefore expected to fall back to the exact scan (consistent with the 285.4 ms,
+recall 1.000 row); at `ef_search` 400 it can still underfill after owner
+filtering, though here the walk is expected to fill the window. The harness
+records recall and latency only and does not record which path ran.
 
 A cosine similarity below zero is reported as a score of 0, and candidates that
 tie on their score are ordered by descending id. When the retrieved candidates

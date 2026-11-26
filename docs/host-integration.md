@@ -859,8 +859,8 @@ A host `VectorIndex` returns finite scores in 0..=1; any other score fails the s
 Keep the source's claim through local admission; fewer authorized results do
 not prove that the source was exhausted. The existing HTTP wire carries only
 candidates, so `VectorIndexClient` reports `Unknown` even for a short answer.
-The local chunk-limited fallback can also return a short memory page without
-proving exhaustion.
+The local index reports a short nonempty memory page as `Unknown` too, although
+only its exact scan of the owners' chunks returns one.
 
 Rust callers receive this metadata as `MemorySearchPage::candidate_bound` and
 `SearchReadResponse::candidate_bound`. A known candidate budget takes

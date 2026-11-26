@@ -74,9 +74,8 @@ pub(crate) async fn local_nearest(
         .fetch_all(context.as_mut())
         .await
         .map_err(map_err)?;
-    // The exact fallback still caps CHUNKS before grouping memories. A short
-    // nonempty page therefore cannot prove exhaustion of distinct memories.
-    // `Proxiima.Search.chunkCandidateBound`.
+    // A short nonempty page claims no exhaustion, though only the exact scan
+    // of the owners' chunks returns one: `Proxiima.Search.chunkCandidateBound`.
     let bound = if rows.is_empty() {
         CandidateBound::Complete
     } else if rows.len() >= usize::try_from(window.min(SEMANTIC_SCAN_CAP)).unwrap_or(usize::MAX) {
@@ -125,6 +124,7 @@ pub fn vector_candidate_artifacts() -> Result<Vec<Artifact>, StorageError> {
                  RETURNS TABLE(memory_id uuid, similarity_score real)
                  LANGUAGE plpgsql STABLE SECURITY DEFINER
                  SET search_path = pg_catalog, pg_temp
+                 SET plan_cache_mode = force_custom_plan
                  AS $body$",
                 )
                 .push_text(&body)
@@ -147,14 +147,64 @@ pub fn vector_candidate_artifacts() -> Result<Vec<Artifact>, StorageError> {
         .collect()
 }
 
-/// A fixed-width ANN scan, with an exact owner scan when ANN underfills.
+/// `R` in the rule of `nearest_sql`, measured rather than derived: on two
+/// 1024-d corpora of about 100,000 chunks, one single-chunk and one
+/// multi-chunk, the exact scan won up to `n² = 101·target·N` and the walk won
+/// from `120·target·N`.
+const EXACT_SCAN_RATIO: u32 = 108;
+
+/// The most owner chunks the exact scan scores before the walk takes over,
+/// whatever the lane's size: it bounds the count that decides, and past it
+/// the walk won.
+const EXACT_SCAN_BUDGET_CAP: u32 = 32_000;
+
+/// `exact_budget`, the most owner chunks `nearest_sql` scores exactly, and
+/// `owned`, the owners' chunks counted up to one past it.
+fn exact_budget_sql(lane: Lane, width: &SqlText) -> SqlText {
+    let mut sql = SqlText::new("    SELECT LEAST(floor(sqrt(");
+    sql.push_u64(u64::from(EXACT_SCAN_RATIO))
+        .push(" * target * GREATEST(c.reltuples, target))), ")
+        .push_u64(u64::from(EXACT_SCAN_BUDGET_CAP))
+        .push(
+            ")::bigint
+      INTO exact_budget
+      FROM pg_catalog.pg_class c
+     WHERE c.oid = 'proxiima_core.embeddings_hnsw_d",
+        )
+        .push_text(width)
+        .push(
+            "'::regclass;
+    SELECT count(*) INTO owned
+      FROM (SELECT 1 FROM proxiima_core.embeddings emb
+             WHERE emb.owner_id = ANY($1)
+               AND emb.model_id = $2
+               AND ",
+        )
+        .push(lane.predicate)
+        .push(
+            "
+             LIMIT exact_budget + 1) owned_chunks;",
+        );
+    sql
+}
+
+/// The owners' memories nearest the query, exact or by index.
+///
+/// A walk for `target` memories through a lane of `N` chunks, `n` of them the
+/// owners', visits about `target·N/n` tuples; the exact scan scores all `n`.
+/// So the owners' chunks are scored exactly when `n² ≤ R·target·N` and
+/// `n ≤ EXACT_SCAN_BUDGET_CAP`, with `N` the row estimate of the lane's own
+/// index, so another width's rows do not count; and when the walk's chunk
+/// window cannot fill `target` memories. Every statement is planned for the
+/// call's owners, because a plan cached for one owner set serves no other.
 pub(crate) fn nearest_sql(lane: Lane) -> SqlText {
     let mut cap = SqlText::new("");
     cap.push_u64(u64::from(SEMANTIC_SCAN_CAP));
     let mut width = SqlText::new("");
     width.push_u64(u64::try_from(lane.width).unwrap_or_default());
+    let budget = exact_budget_sql(lane, &width);
     let scan = candidate_scan_sql(lane, "chunk_window");
-    let fallback = best_chunk_scores_sql(lane, false, "target");
+    let exact = best_chunk_scores_sql(lane, false, "target");
     let rerank = best_chunk_scores_sql(lane, true, "target");
     let mut sql = SqlText::new(
         "
@@ -168,6 +218,8 @@ DECLARE
     candidate_ids uuid[] := '{}'::uuid[];
     scanned_ids uuid[];
     fetched bigint;
+    exact_budget bigint;
+    owned bigint;
 BEGIN
     PERFORM proxiima_core.assert_search_scope($1);
     IF public.vector_dims($3) IS DISTINCT FROM ",
@@ -181,44 +233,51 @@ BEGIN
     IF target = 0 THEN
         RETURN;
     END IF;
-    LOOP
-        WITH scanned AS MATERIALIZED (
+",
+        )
+        .push_text(&budget)
+        .push(
+            "
+    IF owned > exact_budget THEN
+        LOOP
+            WITH scanned AS MATERIALIZED (
 ",
         )
         .push_text(&scan)
         .push(
             "
-        )
-        SELECT COALESCE(array_agg(DISTINCT s.entity_id), '{}'::uuid[]), count(*)
-          INTO scanned_ids, fetched FROM scanned s;
-        SELECT ARRAY(SELECT DISTINCT id FROM unnest(candidate_ids || scanned_ids) id)
-          INTO candidate_ids;
-        EXIT WHEN fetched < chunk_window
-               OR cardinality(candidate_ids) >= target
-               OR chunk_window >= ",
+            )
+            SELECT COALESCE(array_agg(DISTINCT s.entity_id), '{}'::uuid[]), count(*)
+              INTO scanned_ids, fetched FROM scanned s;
+            SELECT ARRAY(SELECT DISTINCT id FROM unnest(candidate_ids || scanned_ids) id)
+              INTO candidate_ids;
+            EXIT WHEN fetched < chunk_window
+                   OR cardinality(candidate_ids) >= target
+                   OR chunk_window >= ",
         )
         .push_text(&cap)
         .push(
             ";
-        chunk_window := LEAST(chunk_window * 2, ",
+            chunk_window := LEAST(chunk_window * 2, ",
         )
         .push_text(&cap)
         .push(
             ");
-    END LOOP;
-    IF cardinality(candidate_ids) < target THEN
-        RETURN QUERY
+        END LOOP;
+        IF cardinality(candidate_ids) >= target THEN
+            RETURN QUERY
 ",
         )
-        .push_text(&fallback)
+        .push_text(&rerank)
         .push(
             "
-        RETURN;
+            RETURN;
+        END IF;
     END IF;
     RETURN QUERY
 ",
         )
-        .push_text(&rerank)
+        .push_text(&exact)
         .push(
             "
 END;
@@ -236,53 +295,51 @@ const HEADS_ONLY_FILTER: &str = "
                 OR EXISTS (SELECT 1 FROM proxiima_core.memory_head mh
                             WHERE mh.owner_id=m.owner_id AND mh.t=m.t AND mh.handle=m.handle))";
 
+/// Each memory's best chunk at its head embedding version, scored exactly,
+/// best first.
+///
+/// Every memory is scored and sorted before any is checked; the checks then
+/// run one memory at a time in that order until `target` memories pass. The
+/// lateral `LIMIT 1` is what keeps them there: a subquery with a `LIMIT` is
+/// never flattened into a join the planner could run over every memory first.
 fn best_chunk_scores_sql(lane: Lane, candidates_only: bool, target: &'static str) -> SqlText {
     let candidate_filter = if candidates_only {
         "
-               AND emb.entity_id = ANY(candidate_ids)"
+                   AND emb.entity_id = ANY(candidate_ids)"
     } else {
         ""
     };
-    let mut chunk_limit = SqlText::new("");
-    if !candidates_only {
-        chunk_limit
-            .push("\n         ORDER BY emb.chunk_score DESC NULLS LAST, emb.entity_id DESC\n         LIMIT ")
-            .push_u64(u64::from(SEMANTIC_SCAN_CAP));
-    }
     let mut sql = SqlText::new(
-        "        WITH owned_embeddings AS MATERIALIZED (
-            SELECT emb.entity_id, emb.model_id, emb.dim, emb.embedding_version,
-                   NULLIF(1 - (emb.vec OPERATOR(public.<=>) $3), 'NaN'::float8) AS chunk_score
-              FROM proxiima_core.embeddings emb
-             WHERE emb.owner_id = ANY($1)
-               AND emb.model_id = $2
-               AND ",
+        "        SELECT s.entity_id, s.score
+          FROM (SELECT emb.entity_id, emb.model_id, emb.dim, emb.embedding_version,
+                       LEAST(1.0, GREATEST(0.0, MAX(
+                           NULLIF(1 - (emb.vec OPERATOR(public.<=>) $3), 'NaN'::float8)
+                       )))::real AS score
+                  FROM proxiima_core.embeddings emb
+                 WHERE emb.owner_id = ANY($1)
+                   AND emb.model_id = $2
+                   AND ",
     );
     sql.push(lane.predicate)
         .push(candidate_filter)
         .push(
             "
-        ), eligible_chunks AS (
-        SELECT emb.entity_id, emb.chunk_score
-          FROM owned_embeddings emb
-          JOIN proxiima_core.embedding_heads head
-            ON head.entity_id = emb.entity_id
-           AND head.model_id = emb.model_id
-           AND head.dim = emb.dim
-           AND head.embedding_version = emb.embedding_version
-          JOIN proxiima_core.live_memory m ON m.t = emb.entity_id
-         WHERE m.owner_id = ANY($1)",
+                 GROUP BY emb.entity_id, emb.model_id, emb.dim, emb.embedding_version
+                 ORDER BY score DESC, emb.entity_id DESC) s
+         CROSS JOIN LATERAL (
+               SELECT 1 FROM proxiima_core.embedding_heads head
+                 JOIN proxiima_core.live_memory m ON m.t = head.entity_id
+                WHERE head.entity_id = s.entity_id
+                  AND head.model_id = s.model_id
+                  AND head.dim = s.dim
+                  AND head.embedding_version = s.embedding_version
+                  AND m.owner_id = ANY($1)",
         )
         .push(HEADS_ONLY_FILTER)
-        .push_text(&chunk_limit)
         .push(
             "
-        )
-        SELECT emb.entity_id,
-               LEAST(1.0, GREATEST(0.0, MAX(emb.chunk_score)))::real AS score
-          FROM eligible_chunks emb
-         GROUP BY emb.entity_id
-         ORDER BY score DESC, emb.entity_id DESC
+                LIMIT 1) eligible
+         ORDER BY s.score DESC, s.entity_id DESC
          LIMIT ",
         )
         .push(target)
@@ -341,8 +398,12 @@ pub fn candidate_scan_sql_for_tests(dim: EmbeddingDim) -> SqlText {
     candidate_scan_sql(Lane::of(dim), "$4")
 }
 
-/// The production exact owner scan, run when the candidate scan underfills,
-/// with its target as bind four.
+/// `EXACT_SCAN_RATIO`, for a test that seeds an owner large enough to walk.
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub const EXACT_SCAN_RATIO_FOR_TESTS: u32 = EXACT_SCAN_RATIO;
+
+/// The production exact owner scan, with its target as bind four.
 #[cfg(any(test, feature = "testkit"))]
 #[doc(hidden)]
 #[must_use]
