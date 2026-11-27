@@ -266,6 +266,14 @@ CREATE OR REPLACE TRIGGER memory_sidecar_stamp_declared BEFORE INSERT OR UPDATE 
 -- memory_head
 -- A series keeps its handle; each admission appends an immutable, time-ordered ID.
 CREATE OR REPLACE TRIGGER memory_head_t_only BEFORE UPDATE ON proxiima_core.memory_head FOR EACH ROW EXECUTE FUNCTION proxiima_core.memory_head_t_only();
+CREATE OR REPLACE TRIGGER memory_head_changed_index_debt
+    AFTER UPDATE OF t ON proxiima_core.memory_head
+    FOR EACH ROW WHEN (OLD.t IS DISTINCT FROM NEW.t)
+    EXECUTE FUNCTION proxiima_core.memory_head_changed_index_debt();
+CREATE OR REPLACE TRIGGER memory_head_deleted_index_debt
+    AFTER DELETE ON proxiima_core.memory_head
+    FOR EACH ROW
+    EXECUTE FUNCTION proxiima_core.memory_head_changed_index_debt();
 DROP TRIGGER IF EXISTS memory_align_head_on_update ON proxiima_core.memory;
 -- `Proxiima.Identity.seriesContract` and `Proxiima.Identity.schemaAuthority`.
 CREATE CONSTRAINT TRIGGER memory_align_head_on_update

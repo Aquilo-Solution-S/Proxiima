@@ -684,6 +684,7 @@ pub async fn dump_database(
                 | "owner_rls_installed"
                 | "export_erase_fence"
                 | "maintenance_lease"
+                | "vector_index_unsent_intents"
                 | "vector_index_debt"
                 | "publication_backlog"
                 | "retention"
@@ -757,6 +758,13 @@ pub async fn dump_database(
                 // `a_job_the_provider_always_fails_cannot_starve_the_queue`
                 // asserts the column.
                 object.remove("retry_position");
+            }
+            if table == "embedding_heads"
+                && let Some(object) = row.as_object_mut()
+            {
+                // 0074 adds monotonic vector publication generations for host
+                // vector indexes; `semantic_vector_index` pins the column.
+                object.remove("vector_generation");
             }
             if table == "blob_uploads"
                 && let Some(object) = row.as_object_mut()

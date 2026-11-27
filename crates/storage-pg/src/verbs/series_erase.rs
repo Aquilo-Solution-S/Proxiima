@@ -815,6 +815,20 @@ fn page_or_refusal(
     }
 }
 
+/// Result of one `erase_series` execution inside a series-erase session.
+pub(crate) enum SeriesEraseWork {
+    /// Active remote write-ahead publish intents were observed for the locked
+    /// erase footprint before any row was deleted; the caller must roll back
+    /// the erase transaction, durably invalidate these intents, and return a
+    /// typed retryable error.
+    InFlightIntents(Vec<crate::vector_index::InFlightIntent>),
+    Applied {
+        outcome: SeriesEraseOutcome,
+        cold_purge: ColdPurgePlan,
+        erased_entities: Vec<Uuid>,
+    },
+}
+
 /// Resolve, refuse or erase one selection. The returned plan is the cold
 /// debt the caller settles after commit.
 ///
@@ -828,28 +842,31 @@ pub(crate) async fn erase_series(
     context: &crate::PgHostStateEraseContext,
     owner: &OwnerId,
     request: &SeriesEraseRequest<'_>,
-) -> Result<(SeriesEraseOutcome, ColdPurgePlan), StorageError> {
+    lock_vector_keys: bool,
+) -> Result<SeriesEraseWork, StorageError> {
     let owner_id = owner.into_inner();
     let pairs = reference_pairs(tx, &context.surfaces, sidecars).await?;
     let (footprint, more_remaining) =
         match resolve_footprint(tx, sidecars, &pairs, owner_id, request).await? {
             Ok(resolved) => resolved,
             Err(refusal) => {
-                return Ok((
-                    SeriesEraseOutcome::Refused(refusal),
-                    ColdPurgePlan::default(),
-                ));
+                return Ok(SeriesEraseWork::Applied {
+                    outcome: SeriesEraseOutcome::Refused(refusal),
+                    cold_purge: ColdPurgePlan::default(),
+                    erased_entities: Vec::new(),
+                });
             }
         };
     let ts = footprint.ts();
     if ts.is_empty() {
-        return Ok((
-            SeriesEraseOutcome::Erased(SeriesEraseReport {
+        return Ok(SeriesEraseWork::Applied {
+            outcome: SeriesEraseOutcome::Erased(SeriesEraseReport {
                 more_remaining,
                 ..SeriesEraseReport::default()
             }),
-            ColdPurgePlan::default(),
-        ));
+            cold_purge: ColdPurgePlan::default(),
+            erased_entities: Vec::new(),
+        });
     }
 
     // `Proxiima.ErasureExport.closureOrder`.
@@ -858,6 +875,33 @@ pub(crate) async fn erase_series(
         return Err(StorageError::Retryable(
             "erase footprint changed before its lock".into(),
         ));
+    }
+    if lock_vector_keys {
+        // Acquire canonical embedding key locks (level 5) strictly for the
+        // locked `ts` footprint (regardless of recorded `debt.owner_id`) before
+        // deletes write `vector_index_debt` (level 6), and check for active
+        // publish intents before delete triggers overwrite `generation` to `0`.
+        let keys: Vec<(Uuid, String, i16)> = sqlx::query_as(
+            "SELECT entity_id, model_id, dim
+               FROM proxiima_core.embedding_heads
+              WHERE entity_id = ANY($1::uuid[])
+             UNION
+             SELECT entity_id, model_id, dim
+               FROM proxiima_core.vector_index_debt
+              WHERE entity_id = ANY($1::uuid[])",
+        )
+        .bind(&ts)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_err)?;
+        super::fact_embeddings::lock_embedding_keys_batch(tx.as_mut(), &keys).await?;
+        if request.mode == proxiima_core::verbs::own_erase::EraseMode::Erase {
+            let in_flight_intents =
+                crate::vector_index::find_in_flight_intents_for_entities(tx.as_mut(), &ts).await?;
+            if !in_flight_intents.is_empty() {
+                return Ok(SeriesEraseWork::InFlightIntents(in_flight_intents));
+            }
+        }
     }
 
     let dangling_pins: i64 = sqlx::query_scalar(DANGLING_PINS_SQL)
@@ -893,7 +937,11 @@ pub(crate) async fn erase_series(
         dangling_pins: int_to_u64(dangling_pins, "dangling pins")?,
         more_remaining,
     };
-    Ok((SeriesEraseOutcome::Erased(report), cold_purge))
+    Ok(SeriesEraseWork::Applied {
+        outcome: SeriesEraseOutcome::Erased(report),
+        cold_purge,
+        erased_entities: ts,
+    })
 }
 
 fn count(n: usize) -> u64 {

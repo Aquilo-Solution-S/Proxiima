@@ -102,29 +102,185 @@ impl EmbeddingTextPort for PgStorage {
 }
 
 impl PgStorage {
-    /// Write one embedding version where this store keeps its vectors: the
-    /// local `embeddings` table, or the host index with its head.
-    pub(crate) async fn insert_embedding_version(
+    /// Publish `writes` to a remote host `index` using single-connection
+    /// two-phase write-ahead intent (`Proxiima.Embeddings.hostPublication`):
+    ///
+    /// 1. Short transaction 1 holds levels 1–3 and level 5, verifies job
+    ///    claims, allocates monotonic `vector_index_generation_seq` tokens,
+    ///    commits durable `'delete'` intent rows stamped with each key's
+    ///    generation, and releases the PostgreSQL connection.
+    /// 2. `index.put_batch(&puts)` runs with zero database connections held.
+    ///    Because `embedding_heads` still holds the prior `vector_generation`,
+    ///    remote search never admits uncommitted scores while the RPC is open
+    ///    or after a failure before draining.
+    /// 3. Short transaction 2 re-acquires levels 1–3 and level 5, completes
+    ///    job claims, verifies each eligible key's intent row still carries
+    ///    its generation, commits `embedding_heads`, and re-enqueues `'head'`
+    ///    debt if `is_head` flipped while the RPC ran.
+    ///
+    /// Because at most one platform connection is held at a time, publication
+    /// works even at `minPoolConnections = 1`, across shared platform pools,
+    /// and behind transaction-mode `PgBouncer`.
+    async fn insert_remote_embeddings(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        owner: &OwnerId,
-        entity: proxiima_core::EmbeddableEntityRef,
-        vectors: &[proxiima_core::SpaceVector],
-    ) -> Result<EmbeddingWriteOutcome, StorageError> {
-        // `Proxiima.Embeddings.vectorStorageParts`.
-        match &self.vectors {
-            crate::vector_index::StoreVectors::Local => {
-                verbs::fact_embeddings::insert_embedding(tx, owner, entity, vectors).await
-            }
-            crate::vector_index::StoreVectors::Remote(index) => {
-                verbs::fact_embeddings::insert_embedding_head(
-                    tx,
-                    index.as_ref(),
-                    owner,
-                    entity,
-                    vectors,
+        index: &dyn proxiima_core::storage_ports::VectorIndex,
+        writes: &[proxiima_core::storage_ports::EmbeddingWrite<'_>],
+        spaces: &[&EmbeddingSpace],
+    ) -> Result<Vec<EmbeddingWriteOutcome>, StorageError> {
+        let head_writes: Vec<verbs::fact_embeddings::EmbeddingHeadWrite<'_>> = writes
+            .iter()
+            .map(|write| verbs::fact_embeddings::EmbeddingHeadWrite {
+                owner: write.owner,
+                entity: write.entity,
+                vectors: write.vectors,
+            })
+            .collect();
+        let lock_keys = verbs::fact_embeddings::embedding_head_lock_keys(&head_writes)?;
+        let fence_targets: Vec<(OwnerId, proxiima_core::EmbeddableEntityRef)> = writes
+            .iter()
+            .map(|write| (*write.owner, write.entity))
+            .collect();
+
+        // Phase 1: validate provider limits, snapshot prior debt, commit
+        // durable write-ahead `'delete'` intent stamped with `clock_timestamp()`
+        // and monotonic generations, then release the connection before RPC I/O.
+        let (puts, staged) = {
+            let mut tx1 = self.platform_transaction().await?;
+            let fences =
+                verbs::fact_embeddings::lock_embedding_write_fences(&mut tx1, &fence_targets)
+                    .await?;
+            verbs::fact_embeddings::lock_embedding_keys_batch(tx1.as_mut(), &lock_keys).await?;
+            for (write, space) in writes.iter().zip(spaces) {
+                verbs::fact_embeddings::verify_embedding_job_claim(
+                    &mut tx1,
+                    write.owner,
+                    write.entity,
+                    space,
+                    write.proof,
                 )
-                .await
+                .await?;
+            }
+            let (puts, staged) = verbs::fact_embeddings::prepare_remote_publish_intent(
+                &mut tx1,
+                &fences,
+                &head_writes,
+                index,
+            )
+            .await?;
+            if puts.is_empty() {
+                verbs::fact_embeddings::complete_embedding_job_claims(&mut tx1, writes, spaces)
+                    .await?;
+                tx1.commit().await.map_err(crate::error::map_err)?;
+                return Ok(vec![
+                    EmbeddingWriteOutcome {
+                        embedding_version: 0,
+                    };
+                    writes.len()
+                ]);
+            }
+            tx1.commit().await.map_err(crate::error::map_err)?;
+            (puts, staged)
+        };
+
+        // Phase 2: push vectors with zero database connections held across
+        // network I/O, renewing the publish-intent lease periodically so long
+        // healthy batches never expire. On error, immediately restore prior
+        // debt for unsent keys and release uncertain keys for fenced cleanup.
+        if let Err(batch_err) = self
+            .put_batch_with_lease_renewal(index, &puts, &staged)
+            .await
+        {
+            let unsent: std::collections::HashSet<usize> =
+                batch_err.unsent_indices.iter().copied().collect();
+            let _ = crate::vector_index::release_failed_publish_intents(
+                &self.pool,
+                &self.platform_scope,
+                &staged,
+                &unsent,
+            )
+            .await;
+            return Err(batch_err.into_storage_error());
+        }
+
+        // Phase 3: complete claims and commit `embedding_heads` only if our
+        // write-ahead intent still owns every eligible key. If Phase 3 rolls
+        // back (for example after a stolen claim or concurrent invalidation),
+        // release any remaining intents belonging to this batch immediately so
+        // ordinary debt drain cleans up uncommitted provider vectors without
+        // waiting for the lease timeout.
+        match self
+            .commit_remote_publish_tx2(
+                writes,
+                spaces,
+                &head_writes,
+                &fence_targets,
+                &lock_keys,
+                &puts,
+            )
+            .await
+        {
+            Ok(outcomes) => Ok(outcomes),
+            Err(err) => {
+                let empty = std::collections::HashSet::new();
+                let _ = crate::vector_index::release_failed_publish_intents(
+                    &self.pool,
+                    &self.platform_scope,
+                    &staged,
+                    &empty,
+                )
+                .await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn commit_remote_publish_tx2(
+        &self,
+        writes: &[proxiima_core::storage_ports::EmbeddingWrite<'_>],
+        spaces: &[&EmbeddingSpace],
+        head_writes: &[verbs::fact_embeddings::EmbeddingHeadWrite<'_>],
+        fence_targets: &[(OwnerId, proxiima_core::EmbeddableEntityRef)],
+        lock_keys: &[(uuid::Uuid, String, i16)],
+        puts: &[proxiima_core::storage_ports::VectorPut<'_>],
+    ) -> Result<Vec<EmbeddingWriteOutcome>, StorageError> {
+        let mut tx2 = self.platform_transaction().await?;
+        let fences =
+            verbs::fact_embeddings::lock_embedding_write_fences(&mut tx2, fence_targets).await?;
+        verbs::fact_embeddings::lock_embedding_keys_batch(tx2.as_mut(), lock_keys).await?;
+        verbs::fact_embeddings::complete_embedding_job_claims(&mut tx2, writes, spaces).await?;
+        let outcomes = verbs::fact_embeddings::commit_remote_publish_heads(
+            &mut tx2,
+            &fences,
+            head_writes,
+            puts,
+        )
+        .await?;
+        tx2.commit().await.map_err(crate::error::map_err)?;
+        Ok(outcomes)
+    }
+
+    async fn put_batch_with_lease_renewal(
+        &self,
+        index: &dyn proxiima_core::storage_ports::VectorIndex,
+        puts: &[proxiima_core::storage_ports::VectorPut<'_>],
+        staged: &[crate::vector_index::StagedPublishIntent],
+    ) -> Result<(), proxiima_core::storage_ports::VectorPutBatchError> {
+        let put_fut = index.put_batch(puts);
+        tokio::pin!(put_fut);
+        let mut ticker = tokio::time::interval(self.vector_debt_renew_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+        loop {
+            tokio::select! {
+                res = &mut put_fut => return res,
+                _ = ticker.tick() => {
+                    let _ = crate::vector_index::renew_publish_intents(
+                        &self.pool,
+                        &self.platform_scope,
+                        staged,
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -136,34 +292,61 @@ impl EmbeddingWritePort for PgStorage {
         &self,
         writes: &[proxiima_core::storage_ports::EmbeddingWrite<'_>],
     ) -> Result<Vec<EmbeddingWriteOutcome>, StorageError> {
+        if writes.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut spaces = Vec::with_capacity(writes.len());
         for write in writes {
             spaces.push(verbs::fact_embeddings::validate_embedding_vectors(
                 write.vectors,
             )?);
         }
-        // `Proxiima.Embeddings.publishChunks` and `Proxiima.Embeddings.hostPublication`.
-        let mut tx = self.platform_transaction().await?;
-        // Finish the fences before sending any vectors to the host index.
-        for (write, space) in writes.iter().zip(spaces) {
-            verbs::fact_embeddings::complete_embedding_job_claim(
-                &mut tx,
-                write.owner,
-                write.entity,
-                space,
-                write.proof,
-            )
-            .await?;
+        // `Proxiima.Embeddings.publishChunks`, `Proxiima.Embeddings.hostPublication`,
+        // and `Proxiima.Embeddings.vectorStorageParts`.
+        match &self.vectors {
+            crate::vector_index::StoreVectors::Local => {
+                let mut tx = self.platform_transaction().await?;
+                let fence_targets: Vec<(OwnerId, proxiima_core::EmbeddableEntityRef)> = writes
+                    .iter()
+                    .map(|write| (*write.owner, write.entity))
+                    .collect();
+                let _fences =
+                    verbs::fact_embeddings::lock_embedding_write_fences(&mut tx, &fence_targets)
+                        .await?;
+                verbs::fact_embeddings::complete_embedding_job_claims(&mut tx, writes, &spaces)
+                    .await?;
+                let lock_keys: Vec<(uuid::Uuid, String, i16)> = writes
+                    .iter()
+                    .zip(&spaces)
+                    .map(|(write, space)| {
+                        (
+                            write.entity.entity_id(),
+                            space.model_id().to_owned(),
+                            crate::pgvector::Lane::of(space.dim()).width,
+                        )
+                    })
+                    .collect();
+                verbs::fact_embeddings::lock_embedding_keys_batch(tx.as_mut(), &lock_keys).await?;
+                let mut outcomes = Vec::with_capacity(writes.len());
+                for write in writes {
+                    outcomes.push(
+                        verbs::fact_embeddings::insert_embedding(
+                            &mut tx,
+                            write.owner,
+                            write.entity,
+                            write.vectors,
+                        )
+                        .await?,
+                    );
+                }
+                tx.commit().await.map_err(crate::error::map_err)?;
+                Ok(outcomes)
+            }
+            crate::vector_index::StoreVectors::Remote(index) => {
+                self.insert_remote_embeddings(index.as_ref(), writes, &spaces)
+                    .await
+            }
         }
-        let mut outcomes = Vec::with_capacity(writes.len());
-        for write in writes {
-            outcomes.push(
-                self.insert_embedding_version(&mut tx, write.owner, write.entity, write.vectors)
-                    .await?,
-            );
-        }
-        tx.commit().await.map_err(crate::error::map_err)?;
-        Ok(outcomes)
     }
 }
 
@@ -194,10 +377,7 @@ impl EmbeddingJobPort for PgStorage {
     }
 
     async fn drain_vector_index_debt(&self, limit: i64) -> Result<u64, StorageError> {
-        let mut tx = self.platform_transaction().await?;
-        let paid = crate::vector_index::drain_debt(tx.as_mut(), &self.vectors, limit).await?;
-        tx.commit().await.map_err(crate::error::map_err)?;
-        Ok(paid)
+        PgStorage::drain_vector_index_debt(self, limit).await
     }
 
     async fn renew_embedding_jobs(

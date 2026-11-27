@@ -138,11 +138,19 @@ pub(crate) async fn embedding_coverage(
 /// One statement per call, so a purge and a concurrent write see one
 /// snapshot. Each table is cut to `$5` rows; the engine loops until a
 /// call deletes fewer than that from every table. `$4` narrows the purge to one series' versions
-/// (a transfer); `NULL` is every memory of the Owner.
+/// (a transfer); `NULL` is every memory of the Owner. `$6..$8` pin the exact
+/// `embedding_heads` keys already locked with `lock_embedding_keys_batch` so
+/// the `AFTER DELETE` trigger on `embedding_heads` cannot deadlock with a
+/// concurrent remote publication deleting `vector_index_debt` before upserting
+/// `embedding_heads`. Jobs go in [`PURGE_EMBEDDING_JOBS_SQL`].
 const PURGE_EMBEDDING_SPACES_SQL: &str = "
 WITH keep AS (
      SELECT k.model_id, k.dim
        FROM unnest($2::text[], $3::smallint[]) AS k(model_id, dim)
+ ),
+ doomed_heads AS (
+     SELECT entity_id, model_id, dim
+       FROM unnest($6::uuid[], $7::text[], $8::smallint[]) AS d(entity_id, model_id, dim)
  ),
  doomed_vectors AS (
      SELECT e.entity_id, e.model_id, e.dim, e.embedding_version, e.chunk_ordinal
@@ -151,6 +159,20 @@ WITH keep AS (
         AND ($4::uuid[] IS NULL OR e.entity_id = ANY($4::uuid[]))
         AND NOT EXISTS (
             SELECT 1 FROM keep k WHERE k.model_id = e.model_id AND k.dim = e.dim
+        )
+        AND (
+            EXISTS (
+                SELECT 1 FROM doomed_heads dh
+                 WHERE dh.entity_id = e.entity_id
+                   AND dh.model_id = e.model_id
+                   AND dh.dim = e.dim
+            )
+            OR NOT EXISTS (
+                SELECT 1 FROM proxiima_core.embedding_heads h
+                 WHERE h.entity_id = e.entity_id
+                   AND h.model_id = e.model_id
+                   AND h.dim = e.dim
+            )
         )
       LIMIT $5
  ),
@@ -164,33 +186,40 @@ WITH keep AS (
         AND e.chunk_ordinal = d.chunk_ordinal
      RETURNING 1
  ),
- doomed_heads AS (
-     SELECT h.entity_id, h.model_id, h.dim
-       FROM proxiima_core.embedding_heads h
-      WHERE h.owner_id = $1
-        AND ($4::uuid[] IS NULL OR h.entity_id = ANY($4::uuid[]))
-        AND NOT EXISTS (
-            SELECT 1 FROM keep k WHERE k.model_id = h.model_id AND k.dim = h.dim
-        )
-      LIMIT $5
- ),
  heads AS (
      DELETE FROM proxiima_core.embedding_heads h
       USING doomed_heads d
-      WHERE h.entity_id = d.entity_id
+      WHERE h.owner_id = $1
+        AND h.entity_id = d.entity_id
         AND h.model_id = d.model_id
         AND h.dim = d.dim
      RETURNING 1
- ),
- doomed_jobs AS (
+ )
+ SELECT (SELECT count(*) FROM vectors)::bigint AS vectors,
+        (SELECT count(*) FROM heads)::bigint AS heads";
+
+/// Up to `$5` of `owner`'s jobs outside the spaces `$2, $3` keep, narrowed to
+/// one series by `$4`, deleted under blocking row locks taken in canonical
+/// `(entity_id, model_id, dim)` order, the order a publication settles its
+/// claims in. A job another transaction holds is waited for, and its status
+/// is rechecked once that transaction commits: a requeue from `failed` to
+/// `pending` still goes, a claim settling as `processing` stays. A caller holds
+/// no embedding-key lock while this waits, since a publisher settling its claim
+/// locks the row before it waits on its key lock.
+const PURGE_EMBEDDING_JOBS_SQL: &str = "
+WITH doomed_jobs AS (
      SELECT j.job_id
        FROM proxiima_core.embedding_jobs j
       WHERE j.owner_id = $1
         AND j.status <> 'processing'
         AND ($4::uuid[] IS NULL OR j.entity_id = ANY($4::uuid[]))
         AND NOT EXISTS (
-            SELECT 1 FROM keep k WHERE k.model_id = j.model_id AND k.dim = j.dim
+            SELECT 1
+              FROM unnest($2::text[], $3::smallint[]) AS k(model_id, dim)
+             WHERE k.model_id = j.model_id AND k.dim = j.dim
         )
+      ORDER BY j.entity_id, j.model_id COLLATE \"C\", j.dim, j.job_id
+      FOR UPDATE OF j
       LIMIT $5
  ),
  jobs AS (
@@ -199,9 +228,7 @@ WITH keep AS (
       WHERE j.job_id = d.job_id
      RETURNING 1
  )
- SELECT (SELECT count(*) FROM vectors)::bigint AS vectors,
-        (SELECT count(*) FROM heads)::bigint AS heads,
-        (SELECT count(*) FROM jobs)::bigint AS jobs";
+ SELECT count(*)::bigint FROM jobs";
 
 /// Delete up to `limit` rows per table of `owner`'s embedding state in
 /// spaces outside `keep`.
@@ -219,13 +246,37 @@ pub(crate) async fn purge_embedding_spaces(
     limit: i64,
 ) -> Result<EmbeddingPurgeOutcome, StorageError> {
     let limit = ensure_nonnegative_limit(limit)?;
+    // Level 1 (shared owner fence) -> Level 5 (canonical embedding keys) ->
+    // Level 6 (row deletes + vector_index_debt trigger), matching remote
+    // publication and whole-owner erase so purge never deadlocks with them.
     let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;
-    let result = purge_in_tx(&mut tx, owner.into_inner(), keep, None, limit).await;
-    crate::owner_scope::finish_transaction(tx, result).await
+    let result = async {
+        crate::access::fences::lock_owner_fence_shared_tx(&mut tx, owner).await?;
+        purge_vectors_and_heads_in_tx(&mut tx, owner.into_inner(), keep, None, limit).await
+    }
+    .await;
+    let (vectors, heads) = crate::owner_scope::finish_transaction(tx, result).await?;
+    // Jobs in a transaction of their own, holding no embedding-key lock while
+    // it waits on a job row.
+    let mut tx = crate::platform_scope::begin_platform_transaction(pool, platform).await?;
+    let result = async {
+        crate::access::fences::lock_owner_fence_shared_tx(&mut tx, owner).await?;
+        purge_jobs_in_tx(&mut tx, owner.into_inner(), keep, None, limit).await
+    }
+    .await;
+    let jobs = crate::owner_scope::finish_transaction(tx, result).await?;
+    Ok(EmbeddingPurgeOutcome {
+        vectors,
+        heads,
+        jobs,
+    })
 }
 
 /// A destination with no route keeps none of the series' embedding state,
-/// so this statement names no space.
+/// so this statement names no space. Its job delete waits on locked rows: a
+/// transfer holds both owners' fences exclusively, and a publisher takes its
+/// owner's fence shared before it locks a job row, so no publisher holds one
+/// of these rows while waiting on the transfer.
 const DROP_SERIES_EMBEDDINGS_SQL: &str = "
 WITH vectors AS (
      DELETE FROM proxiima_core.embeddings
@@ -255,8 +306,28 @@ pub(crate) async fn purge_series_embedding_spaces_in_tx(
     ts: &[uuid::Uuid],
 ) -> Result<EmbeddingPurgeOutcome, StorageError> {
     if !keep.is_empty() {
-        return purge_in_tx(tx, owner_id, keep, Some(ts), i64::MAX).await;
+        let (vectors, heads) =
+            purge_vectors_and_heads_in_tx(tx, owner_id, keep, Some(ts), i64::MAX).await?;
+        let jobs = purge_jobs_in_tx(tx, owner_id, keep, Some(ts), i64::MAX).await?;
+        return Ok(EmbeddingPurgeOutcome {
+            vectors,
+            heads,
+            jobs,
+        });
     }
+    let head_keys: Vec<(uuid::Uuid, String, i16)> = sqlx::query_as(
+        "SELECT h.entity_id, h.model_id, h.dim
+           FROM proxiima_core.embedding_heads h
+          WHERE h.owner_id = $1
+            AND h.entity_id = ANY($2::uuid[])
+          ORDER BY h.entity_id, h.model_id, h.dim",
+    )
+    .bind(owner_id)
+    .bind(ts)
+    .fetch_all(tx.as_mut())
+    .await
+    .map_err(map_err)?;
+    super::lock_embedding_keys_batch(tx.as_mut(), &head_keys).await?;
     let (vectors, heads, jobs): (i64, i64, i64) = sqlx::query_as(DROP_SERIES_EMBEDDINGS_SQL)
         .bind(owner_id)
         .bind(ts)
@@ -270,15 +341,75 @@ pub(crate) async fn purge_series_embedding_spaces_in_tx(
     })
 }
 
-async fn purge_in_tx(
+/// Up to `limit` vectors and heads outside `keep`, under the canonical
+/// embedding-key locks of the heads it deletes; returns their counts.
+async fn purge_vectors_and_heads_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     owner_id: uuid::Uuid,
     keep: &[EmbeddingSpace],
     ts: Option<&[uuid::Uuid]>,
     limit: i64,
-) -> Result<EmbeddingPurgeOutcome, StorageError> {
+) -> Result<(u64, u64), StorageError> {
     let (models, dims) = space_columns(keep);
-    let (vectors, heads, jobs): (i64, i64, i64) = sqlx::query_as(PURGE_EMBEDDING_SPACES_SQL)
+    let head_keys: Vec<(uuid::Uuid, String, i16)> = sqlx::query_as(
+        "SELECT h.entity_id, h.model_id, h.dim
+           FROM proxiima_core.embedding_heads h
+          WHERE h.owner_id = $1
+            AND ($4::uuid[] IS NULL OR h.entity_id = ANY($4::uuid[]))
+            AND NOT EXISTS (
+                SELECT 1
+                  FROM unnest($2::text[], $3::smallint[]) AS k(model_id, dim)
+                 WHERE k.model_id = h.model_id AND k.dim = h.dim
+            )
+          ORDER BY h.entity_id, h.model_id, h.dim
+          LIMIT $5",
+    )
+    .bind(owner_id)
+    .bind(&models)
+    .bind(&dims)
+    .bind(ts)
+    .bind(limit)
+    .fetch_all(tx.as_mut())
+    .await
+    .map_err(map_err)?;
+    super::lock_embedding_keys_batch(tx.as_mut(), &head_keys).await?;
+    let mut head_entities = Vec::with_capacity(head_keys.len());
+    let mut head_models = Vec::with_capacity(head_keys.len());
+    let mut head_dims = Vec::with_capacity(head_keys.len());
+    for (entity_id, model_id, dim) in &head_keys {
+        head_entities.push(*entity_id);
+        head_models.push(model_id.as_str());
+        head_dims.push(*dim);
+    }
+    let (vectors, heads): (i64, i64) = sqlx::query_as(PURGE_EMBEDDING_SPACES_SQL)
+        .bind(owner_id)
+        .bind(&models)
+        .bind(&dims)
+        .bind(ts)
+        .bind(limit)
+        .bind(&head_entities)
+        .bind(&head_models)
+        .bind(&head_dims)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_err)?;
+    Ok((
+        int_to_u64(vectors, "purged vector")?,
+        int_to_u64(heads, "purged head")?,
+    ))
+}
+
+/// Up to `limit` jobs outside `keep`, as [`PURGE_EMBEDDING_JOBS_SQL`] locks
+/// them; returns their count.
+async fn purge_jobs_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    owner_id: uuid::Uuid,
+    keep: &[EmbeddingSpace],
+    ts: Option<&[uuid::Uuid]>,
+    limit: i64,
+) -> Result<u64, StorageError> {
+    let (models, dims) = space_columns(keep);
+    let jobs: i64 = sqlx::query_scalar(PURGE_EMBEDDING_JOBS_SQL)
         .bind(owner_id)
         .bind(&models)
         .bind(&dims)
@@ -287,11 +418,7 @@ async fn purge_in_tx(
         .fetch_one(tx.as_mut())
         .await
         .map_err(map_err)?;
-    Ok(EmbeddingPurgeOutcome {
-        vectors: int_to_u64(vectors, "purged vector")?,
-        heads: int_to_u64(heads, "purged head")?,
-        jobs: int_to_u64(jobs, "purged job")?,
-    })
+    int_to_u64(jobs, "purged job")
 }
 
 /// Queue a series' hot head for every route space it has no vector in: a

@@ -88,6 +88,7 @@ pub(crate) async fn local_nearest(
             .map(|(memory_id, similarity_score)| VectorCandidate {
                 memory_id: MemoryId::new(memory_id),
                 similarity_score,
+                generation: 0,
             })
             .collect(),
         bound,
@@ -415,4 +416,14 @@ pub fn best_chunk_scores_sql_for_tests(dim: EmbeddingDim) -> SqlText {
 }
 
 mod debt;
-pub(crate) use debt::{drain_debt, settle_owner_debt, sweep_index};
+pub(crate) use debt::{
+    DEBT_LEASE_RENEW_INTERVAL, DEBT_LEASE_SECONDS, InFlightIntent, OwnerUnsentScope, PriorDebt,
+    SettleDebtError, StagedPublishIntent, drain_debt_with_lease,
+    find_in_flight_intents_for_entities, find_in_flight_intents_for_owner,
+    invalidate_publish_intents, release_failed_publish_intents, renew_publish_intents,
+    resolve_prior_debt_for_takeover, settle_entity_debt, settle_owner_debt, sweep_index,
+    sweep_index_bounded,
+};
+#[cfg(any(test, feature = "testkit"))]
+#[doc(hidden)]
+pub use debt::{heads_after_sql_for_tests, heads_first_sql_for_tests, heads_is_head_sql_for_tests};

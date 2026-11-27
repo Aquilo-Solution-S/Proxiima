@@ -663,6 +663,7 @@ pub const DROPPED_TABLES: &[&str] = &[
     // owner (an always-empty fence and the maintenance leases).
     "export_erase_fence",
     "maintenance_lease",
+    "vector_index_unsent_intents",
     // Added after the baseline by 0050: a host vector index's pending
     // changes. An erase settles its own before commit;
     // `semantic_vector_index` pins it.
@@ -710,6 +711,9 @@ pub const UNPAIRED_COLUMNS: &[(&str, &str)] = &[
     // pins the mapping.
     ("delegated_authority_grants", "goal_access"),
     ("delegated_authority_grants", "administers"),
+    // 0074 adds monotonic vector publication generations for host vector
+    // indexes; `semantic_vector_index` pins the column directly.
+    ("embedding_heads", "vector_generation"),
 ];
 
 fn names_relation(table: &str, relation: &str) -> bool {

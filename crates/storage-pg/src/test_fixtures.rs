@@ -151,6 +151,49 @@ pub async fn stage_previous_head(
     )
     .execute(&mut *transaction)
     .await?;
+    sqlx::query("DROP TABLE proxiima_core.vector_index_unsent_intents")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "DELETE FROM proxiima_core.owner_rls_installed
+          WHERE schema_name = 'proxiima_core' AND table_name = 'vector_index_unsent_intents'",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "DELETE FROM proxiima_core.owner_rls_table
+          WHERE schema_name = 'proxiima_core' AND table_name = 'vector_index_unsent_intents'",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DROP INDEX proxiima_core.embedding_heads_sweep_key_idx")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE proxiima_core.vector_index_debt
+             DROP COLUMN generation,
+             DROP COLUMN moved_from_generation,
+             DROP CONSTRAINT vector_index_debt_op_chk,
+             ADD CONSTRAINT vector_index_debt_op_chk
+                 CHECK ((op = ANY (ARRAY['delete'::text, 'owner'::text])))",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE proxiima_core.embedding_heads
+             DROP COLUMN vector_generation",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DROP SEQUENCE proxiima_core.vector_index_generation_seq")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "COMMENT ON TABLE proxiima_core.vector_index_debt IS \
+         'What a store owes its host vector index: delete the key''s chunks, or record owner_id as their owner. Written by the embedding_heads trigger in the head change''s transaction; deleted once applied.'",
+    )
+    .execute(&mut *transaction)
+    .await?;
     sqlx::query("DELETE FROM public._sqlx_migrations WHERE version <= $1")
         .bind(crate::CORE_MIGRATION_VERSION_CEILING)
         .execute(&mut *transaction)
@@ -817,14 +860,21 @@ impl EmbeddingHome for PgStorage {
         entity: proxiima_core::EmbeddableEntityRef,
         vectors: &[proxiima_core::SpaceVector],
     ) -> Result<i32, StorageError> {
-        let mut tx = self.platform_transaction().await?;
-        let outcome = self
-            .insert_embedding_version(&mut tx, owner, entity, vectors)
+        use proxiima_core::storage_ports::{
+            EmbeddingWrite, EmbeddingWritePort, EmbeddingWriteProof,
+        };
+        let outcomes = self
+            .insert_embeddings(&[EmbeddingWrite {
+                owner,
+                entity,
+                vectors,
+                proof: EmbeddingWriteProof::for_direct_write_for_tests(),
+            }])
             .await?;
-        tx.commit()
-            .await
-            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
-        Ok(outcome.embedding_version)
+        Ok(outcomes
+            .into_iter()
+            .next()
+            .map_or(0, |outcome| outcome.embedding_version))
     }
 }
 

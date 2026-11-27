@@ -22,6 +22,11 @@ pub const STORE_WIDE_TABLES: &[(&str, &str)] = &[
          Coordination state about no owner.",
     ),
     (
+        "proxiima_core.vector_index_unsent_intents",
+        "Durable unsent disposition for host vector-index publish intents whose cleanup hit row \
+         contention on vector_index_debt (0074, #519). Platform coordination state about no owner.",
+    ),
+    (
         "proxiima_core.store_identity",
         "The deployment's immutable numeric routing identity. This singleton is platform \
          configuration shared by every owner, with no owner data to export, transfer or erase.",

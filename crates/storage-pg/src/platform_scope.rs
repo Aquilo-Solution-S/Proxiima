@@ -114,6 +114,23 @@ impl PgPlatformScope {
             .store(millis(timeout), Ordering::Relaxed);
     }
 
+    #[cfg(test)]
+    pub(crate) async fn with_single_connection_for_tests(&self) -> Self {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(2))
+            .connect_with((*self.pool.connect_options()).clone())
+            .await
+            .expect("test single-connection platform pool");
+        Self {
+            pool,
+            database_oid: self.database_oid,
+            role_oid: self.role_oid,
+            schemas: Arc::clone(&self.schemas),
+            fence_lock_timeout_ms: Arc::clone(&self.fence_lock_timeout_ms),
+        }
+    }
+
     /// Union composed schemas with stored spiice surfaces for runtime
     /// checks, and the persisted store number, read in one platform
     /// transaction so a boot takes one platform connection for both.

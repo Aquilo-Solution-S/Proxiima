@@ -2002,6 +2002,143 @@ async fn the_embedding_drain_plans_on_its_indexes_without_policy_subqueries() {
     result.expect("embedding drain EXPLAIN failed");
 }
 
+/// Host vector-index keyset sweeps walk `embedding_heads_sweep_key_idx`
+/// without a sequential scan or sort under any database collation.
+#[tokio::test]
+async fn host_index_sweep_pages_on_c_collation_covering_index() {
+    let db_name = format!("proxiima_test_{}", Uuid::now_v7().simple());
+    if let Err(e) = create_core_db(&db_name).await {
+        panic!("PG required for tests but admin connect failed: {e}");
+    }
+    let url = db_url(&db_name);
+    let result: Result<(), Box<dyn std::error::Error>> = async {
+        let pg = PgStorage::connect_for_tests(url.clone()).await?;
+        let pool = pg.pool_for_tests();
+        let platform = pg.platform_scope_for_host();
+        let owner = OwnerId::from(UserId::new(Uuid::now_v7()));
+        create_user(pool, owner.as_user()).await?;
+        sqlx::query(
+            "WITH s AS (SELECT uuidv7() AS handle, uuidv7() AS t FROM generate_series(1, 5000)),
+             mem AS (
+                 INSERT INTO proxiima_core.memory (handle, t, kind, owner_id, schema_id, occurred_at, \"by\")
+                 SELECT handle, t, 'fact', $1, 'core/agent-note-v1', now(),
+                        '00000000-0000-0000-0000-000000000509'::uuid FROM s),
+             mh AS (
+                 INSERT INTO proxiima_core.memory_head (handle, t, kind, owner_id, schema_id)
+                 SELECT handle, t, 'fact', $1, 'core/agent-note-v1' FROM s)
+             INSERT INTO proxiima_core.embedding_heads
+                 (entity_id, model_id, dim, embedding_version, owner_id)
+             SELECT t, 'sweep-model', 1024, 1, $1 FROM s",
+        )
+        .bind(owner.into_inner())
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "WITH g AS (SELECT uuidv7() AS handle, uuidv7() AS t, n FROM generate_series(1, 2000) AS n),
+             gh AS (
+                 INSERT INTO proxiima_core.goal_head (handle, schema_id, owner_id, t)
+                 SELECT handle, 'core/goal-v1', $1, t FROM g)
+             INSERT INTO proxiima_core.goal
+                 (handle, t, owner_id, title, state, \"by\", request_id, schema_id)
+             SELECT handle, t, $1, 'g-' || n, 'Active',
+                    '00000000-0000-0000-0000-000000000509'::uuid, 'req-' || n, 'core/goal-v1' FROM g",
+        )
+        .bind(owner.into_inner())
+        .execute(pool)
+        .await?;
+        sqlx::raw_sql(
+            "ANALYZE proxiima_core.embedding_heads;
+             ANALYZE proxiima_core.memory_head;
+             ANALYZE proxiima_core.goal",
+        )
+        .execute(pool)
+        .await?;
+        let mut tx = platform.begin().await?;
+        sqlx::query("SET LOCAL plan_cache_mode = force_generic_plan")
+            .execute(&mut *tx)
+            .await?;
+        let first_plan: serde_json::Value = sqlx::query_scalar(explain_json(
+            proxiima_storage_pg::vector_index::heads_first_sql_for_tests(),
+        ))
+        .bind(2_000_i64)
+        .fetch_one(&mut *tx)
+        .await?;
+        let first_rendered = serde_json::to_string_pretty(&first_plan)?;
+        assert!(
+            !seq_scans(&first_plan, "embedding_heads"),
+            "heads_first must not sequentially scan embedding_heads; plan:\n{first_rendered}"
+        );
+        assert!(
+            !first_rendered.contains("\"Node Type\": \"Sort\""),
+            "heads_first must not sort embedding_heads; plan:\n{first_rendered}"
+        );
+        let first_eh = scan_of(&first_plan, "embedding_heads")
+            .unwrap_or_else(|| panic!("heads_first must scan embedding_heads; plan:\n{first_rendered}"));
+        assert_eq!(
+            first_eh.get("Index Name").and_then(serde_json::Value::as_str),
+            Some("embedding_heads_sweep_key_idx"),
+            "heads_first must use embedding_heads_sweep_key_idx; plan:\n{first_rendered}"
+        );
+
+        let sweep_plan: serde_json::Value = sqlx::query_scalar(explain_json(
+            proxiima_storage_pg::vector_index::heads_after_sql_for_tests(),
+        ))
+        .bind(Uuid::now_v7())
+        .bind("sweep-model")
+        .bind(1024_i16)
+        .bind(2_000_i64)
+        .fetch_one(&mut *tx)
+        .await?;
+        let rendered = serde_json::to_string_pretty(&sweep_plan)?;
+        assert!(
+            !seq_scans(&sweep_plan, "embedding_heads"),
+            "heads_after must not sequentially scan embedding_heads; plan:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\"Node Type\": \"Sort\""),
+            "heads_after must not sort embedding_heads; plan:\n{rendered}"
+        );
+        let after_eh = scan_of(&sweep_plan, "embedding_heads")
+            .unwrap_or_else(|| panic!("heads_after must scan embedding_heads; plan:\n{rendered}"));
+        assert_eq!(
+            after_eh.get("Index Name").and_then(serde_json::Value::as_str),
+            Some("embedding_heads_sweep_key_idx"),
+            "heads_after must use embedding_heads_sweep_key_idx; plan:\n{rendered}"
+        );
+        assert!(
+            after_eh
+                .get("Index Cond")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|cond| cond.contains("entity_id")),
+            "heads_after generic plan must seek with a tuple Index Cond on embedding_heads_sweep_key_idx; node:\n{after_eh}"
+        );
+
+        let page_ids = vec![Uuid::now_v7(); 20];
+        let page_owners = vec![owner.into_inner(); 20];
+        let is_head_plan: serde_json::Value = sqlx::query_scalar(explain_json(
+            proxiima_storage_pg::vector_index::heads_is_head_sql_for_tests(),
+        ))
+        .bind(&page_ids)
+        .bind(&page_owners)
+        .fetch_one(&mut *tx)
+        .await?;
+        let is_head_rendered = serde_json::to_string_pretty(&is_head_plan)?;
+        assert!(
+            !seq_scans(&is_head_plan, "memory_head"),
+            "heads_is_head must probe memory_head by index rather than scanning corpus-wide; plan:\n{is_head_rendered}"
+        );
+        assert!(
+            !seq_scans(&is_head_plan, "goal"),
+            "heads_is_head must probe goal by index rather than scanning corpus-wide; plan:\n{is_head_rendered}"
+        );
+        tx.rollback().await?;
+        Ok(())
+    }
+    .await;
+    let _ = drop_db(&db_name).await;
+    result.expect("host index sweep EXPLAIN failed");
+}
+
 /// A write's capacity check reads one row however long the backlog is (#491).
 ///
 /// With 50,000 undelivered records and a fresh estimate, the statement that

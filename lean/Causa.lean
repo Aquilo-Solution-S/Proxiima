@@ -12,3 +12,4 @@ import Causa.Compliance
 import Causa.SchemaEvolution
 import Causa.ObjectMaintenance
 import Causa.Transport
+import Causa.VectorIndex

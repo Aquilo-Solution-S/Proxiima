@@ -164,7 +164,8 @@ pub use proxiima_core::storage_ports::{
 };
 pub use proxiima_core::storage_ports::{
     CandidateBound, VectorCandidate, VectorCandidateFilter, VectorCandidatePage, VectorEntry,
-    VectorIndex, VectorKey,
+    VectorEntryPage, VectorIndex, VectorIndexSweepOutcome, VectorKey, VectorMetadataTarget,
+    VectorPut, VectorPutBatchError,
 };
 pub use proxiima_core::verbs::fact_ingest::{
     CitationSpec, FactIngestOutcome, FactReceiptDraft, FactWriteCommand, IngestReceipt,

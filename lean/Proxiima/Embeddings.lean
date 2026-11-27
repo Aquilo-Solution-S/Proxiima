@@ -32,7 +32,7 @@ def heartbeatDivisor : Nat := 3
 def diagnosticsMax : Nat := 256
 /-- Default candidate budget for startup and engine reconciliation. -/
 def reconcileDefaultLimit : Nat := 50000
-/-- Page cardinality and downstream probes per head relation in one reconcile page. -/
+/-- Page cardinality and downstream probes per head relation in one reconcile or host-index sweep page. -/
 def reconcilePageSize : Nat := 2000
 /-- Number of owners routed per reconcile owner page. -/
 def reconcileOwnerPageSize : Nat := 1000
@@ -338,13 +338,110 @@ def publishChunks : List ChunkWrite := [.settleFencedClaim, .lockHead, .appendOr
 
 /-- The order of host-index publication for an embedding key. -/
 inductive HostWrite where
-  | settleDebt
+  | writeIntent
   | pushVersion
-  | commit
+  | commitHead
   deriving DecidableEq
 
-/-- Old key debt is settled before the new version is pushed and accepted before completion. -/
-def hostPublication : List HostWrite := [.settleDebt, .pushVersion, .commit]
+/-- Durable delete intent with a monotonic generation commits before pushing to the host index, and the head commits only if that intent still owns the key. -/
+def hostPublication : List HostWrite := [.writeIntent, .pushVersion, .commitHead]
+
+/-- Keys in one host-index call, so a call's body stays small however many heads one transaction changed. -/
+def hostIndexKeysPerCall : Nat := 500
+/-- Seconds a publish intent or a debt drain claim holds its lease before a drain may reclaim it. -/
+def debtLeaseSeconds : Nat := 60
+/-- Seconds between lease renewals of a live publication or debt drain. -/
+def debtLeaseRenewSeconds : Nat := 20
+/-- Smallest keyset page one debt drain or unsent-intent reconcile scans. -/
+def debtScanMinPage : Nat := 64
+/-- Suspect keys one host-index sweep repairs per transaction. -/
+def sweepRepairsPerTransaction : Nat := 50
+
+/-- What the index reported about one entry of a failed put batch. -/
+inductive PutDelivery where
+  /-- The index may have written the entry. -/
+  | uncertain
+  /-- The index proved it never dispatched the entry. -/
+  | unsent
+  deriving DecidableEq
+
+/-- What failure cleanup finds on the entry's intent row. -/
+inductive IntentRow where
+  /-- The row still carries this publication's generation, and cleanup locked it without waiting. -/
+  | unlocked
+  /-- Another transaction holds the row, or a newer publication took it over. -/
+  | heldOrSuperseded
+  /-- No row carries this publication's generation or a newer one: a purge or a drain settled the key. -/
+  | invalidated
+  deriving DecidableEq
+
+/-- The cleanup step for one entry of a failed put batch. -/
+inductive FailedPutStep where
+  /-- Owe a delete now, so the drain removes a partial write without waiting for the lease. -/
+  | oweDelete
+  /-- Give the key back the debt it carried before this publication staged its intent. -/
+  | restorePrior
+  /-- Leave the intent to its holder; it stays owed as a delete once its lease lapses. -/
+  | leaveToLease
+  /-- Record the unsent intent durably for the drain or the next publication to restore. -/
+  | recordUnsent
+  /-- Keep the debt that settled the key, and record nothing. -/
+  | keepSettled
+  deriving DecidableEq
+
+/-- An uncertain entry owes a delete and an unsent one restores its prior debt; a held row is left to its lease or recorded as unsent; an invalidated intent keeps the debt that settled it. -/
+def failedPutStep : PutDelivery → IntentRow → FailedPutStep
+  | .uncertain, .unlocked => .oweDelete
+  | .uncertain, .heldOrSuperseded => .leaveToLease
+  | .uncertain, .invalidated => .keepSettled
+  | .unsent, .unlocked => .restorePrior
+  | .unsent, .heldOrSuperseded => .recordUnsent
+  | .unsent, .invalidated => .keepSettled
+
+/-- A failed put never restores or records an intent a purge or a drain already settled. -/
+theorem an_invalidated_intent_keeps_its_settled_debt (delivery : PutDelivery) :
+    failedPutStep delivery .invalidated = .keepSettled := by
+  cases delivery <;> rfl
+
+/-- The settled debt a host-index key can owe. -/
+inductive IndexDebt where
+  | delete | owner | head
+  deriving DecidableEq
+
+/-- The debt an unsent key carried before its publication staged an intent, after its unsent predecessors are walked. -/
+inductive UnsentPrior where
+  | absent
+  /-- An earlier publication's intent whose outcome no unsent record resolves. -/
+  | live
+  | settled (debt : IndexDebt)
+  deriving DecidableEq
+
+/-- What restoring an unsent key's prior debt leaves on the key. -/
+inductive UnsentRestore where
+  /-- No debt: the key is as it was before the publication. -/
+  | drop
+  | owe (debt : IndexDebt)
+  /-- The live predecessor's intent returns with a fresh lease. -/
+  | restoreLive
+  deriving DecidableEq
+
+/-- A pending delete is never weakened, an owner move outranks a head flip, and either one turns a dropped intent into debt. -/
+def unsentRestore : (ownerMoved : Bool) → (headFlipped : Bool) → UnsentPrior → UnsentRestore
+  | true, true, .absent | true, false, .absent
+  | true, true, .settled .owner | true, false, .settled .owner
+  | false, true, .settled .owner | false, false, .settled .owner
+  | true, true, .settled .head | true, false, .settled .head => .owe .owner
+  | false, true, .absent | false, true, .settled .head | false, false, .settled .head => .owe .head
+  | false, false, .absent => .drop
+  | true, true, .live | true, false, .live | false, true, .live | false, false, .live => .restoreLive
+  | true, true, .settled .delete | true, false, .settled .delete
+  | false, true, .settled .delete | false, false, .settled .delete => .owe .delete
+
+/-- An owner move during a failed put is never restored as no debt or as a head update. -/
+theorem an_owner_move_survives_an_unsent_restore (headFlipped : Bool) (prior : UnsentPrior) :
+    unsentRestore true headFlipped prior ≠ .drop ∧
+      unsentRestore true headFlipped prior ≠ .owe .head := by
+  cases headFlipped <;> cases prior <;> (try rename_i debt; cases debt) <;> decide
 
 /-- Stages of repairing a host-index key during reconciliation. -/
 inductive IndexRepair where

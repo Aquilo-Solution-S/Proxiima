@@ -144,7 +144,7 @@ impl SubjectMemberships {
 
 struct PgWriteSession {
     store_number: u16,
-    tx: Transaction<'static, Postgres>,
+    tx: Option<Transaction<'static, Postgres>>,
     sidecars: PgSidecarRegistryFrozen,
     surfaces: proxiima_core::owner_inverse::OwnerSurfaces,
     /// The spiice-declared lifecycle scopes, so this session can resolve a
@@ -155,6 +155,14 @@ struct PgWriteSession {
     host_state: Option<crate::RegisteredHostStateParticipant>,
     /// Set only on a session from `begin_series_erase`.
     series_erase: Option<SeriesEraseState>,
+}
+
+impl PgWriteSession {
+    fn tx_mut(&mut self) -> Result<&mut Transaction<'static, Postgres>, StorageError> {
+        self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })
+    }
 }
 
 /// What a series-erase session needs beyond an ordinary one: the boot's
@@ -169,6 +177,7 @@ struct SeriesEraseState {
     vectors: crate::vector_index::StoreVectors,
     ran: bool,
     cold_purge: verbs::forget::ColdPurgePlan,
+    erased_entities: Vec<uuid::Uuid>,
 }
 
 #[async_trait::async_trait]
@@ -304,7 +313,7 @@ impl WriteSessionFactory for PgStorage {
             .await?;
         Ok(Box::new(PgWriteSession {
             store_number: self.store_number,
-            tx,
+            tx: Some(tx),
             sidecars: self.sidecars.clone(),
             surfaces: self.surfaces.clone(),
             scopes: self.scopes.clone(),
@@ -318,6 +327,7 @@ impl WriteSessionFactory for PgStorage {
                 vectors: self.vectors.clone(),
                 ran: false,
                 cold_purge: verbs::forget::ColdPurgePlan::default(),
+                erased_entities: Vec::new(),
             }),
         }))
     }
@@ -330,7 +340,7 @@ impl PgStorage {
     ) -> Box<dyn WriteSession> {
         Box::new(PgWriteSession {
             store_number: self.store_number,
-            tx,
+            tx: Some(tx),
             sidecars: self.sidecars.clone(),
             surfaces: self.surfaces.clone(),
             scopes: self.scopes.clone(),
@@ -346,7 +356,7 @@ impl WriteSession for PgWriteSession {
     async fn advisory_xact_lock(&mut self, key: i64) -> Result<(), StorageError> {
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(key)
-            .execute(&mut *self.tx)
+            .execute(&mut **self.tx_mut()?)
             .await
             .map_err(crate::error::map_err)?;
         Ok(())
@@ -355,7 +365,7 @@ impl WriteSession for PgWriteSession {
     async fn advisory_xact_lock_shared(&mut self, key: i64) -> Result<(), StorageError> {
         sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
             .bind(key)
-            .execute(&mut *self.tx)
+            .execute(&mut **self.tx_mut()?)
             .await
             .map_err(crate::error::map_err)?;
         Ok(())
@@ -366,14 +376,10 @@ impl WriteSession for PgWriteSession {
         permit: &OwnerWritePermit,
         read: &SidecarSessionRead<'_>,
     ) -> Result<Vec<serde_json::Value>, StorageError> {
-        crate::sidecars::read_own_sidecar(
-            &mut self.tx,
-            &self.sidecars,
-            &self.surfaces,
-            permit,
-            read,
-        )
-        .await
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
+        crate::sidecars::read_own_sidecar(tx, &self.sidecars, &self.surfaces, permit, read).await
     }
 
     async fn owned_series_head_memory_id(
@@ -393,7 +399,7 @@ impl WriteSession for PgWriteSession {
             )));
         };
         let head = verbs::query::owned_head_memory_id(
-            &mut *self.tx,
+            &mut **self.tx_mut()?,
             *permit.owner(),
             schema_id,
             sidecar_table,
@@ -427,8 +433,11 @@ impl WriteSession for PgWriteSession {
         // this same line, and the fence it takes is the one the spiice's
         // erase holds.
         let scopes = self.scopes.targets_for_payloads(sidecar_payloads)?;
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
         let outcome = verbs::fact_ingest::ingest_authorized_fact_in_tx(
-            &mut self.tx,
+            tx,
             &self.sidecars,
             authorized,
             embedding_spaces,
@@ -454,7 +463,7 @@ impl WriteSession for PgWriteSession {
         if !outcome.idempotent_replay {
             let kind = PgMemoryKind::from(authorized.draft().kind);
             verbs::sketch::upsert_sketch(
-                &mut self.tx,
+                tx,
                 authorized.owner_write_permit().owner().into_inner(),
                 outcome.memory_id.into_inner(),
                 kind.into(),
@@ -475,25 +484,6 @@ impl WriteSession for PgWriteSession {
         permit: &OwnerWritePermit,
     ) -> Result<AuthorDerivedOutcome, StorageError> {
         let draft = verbs::derive_append::DerivedDraft::from_request(req, self.store_number);
-        verbs::derive_append::validate_retained_pins_in_tx(&mut self.tx, &draft, req.retained_pins)
-            .await?;
-        let new_origins = verbs::derive_append::new_origins(req.origins, req.retained_pins);
-        let new_references =
-            verbs::derive_append::new_references(req.references, req.retained_pins);
-        verbs::derive_append::validate_derived_origins_in_tx(
-            &mut self.tx,
-            &draft,
-            &new_origins,
-            &new_references,
-        )
-        .await?;
-        verbs::derive_append::validate_derived_reference_kinds_in_tx(
-            &mut self.tx,
-            &draft,
-            &new_origins,
-            &new_references,
-        )
-        .await?;
         let sidecars = self.sidecars.writing_derived(&draft);
         let sidecar_payload = req.sidecar_payload.clone();
         let content_payload = sidecar_payload.clone();
@@ -503,8 +493,29 @@ impl WriteSession for PgWriteSession {
         let scopes = self
             .scopes
             .targets_for_payloads(std::slice::from_ref(&sidecar_payload))?;
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
+        verbs::derive_append::validate_retained_pins_in_tx(tx, &draft, req.retained_pins).await?;
+        let new_origins = verbs::derive_append::new_origins(req.origins, req.retained_pins);
+        let new_references =
+            verbs::derive_append::new_references(req.references, req.retained_pins);
+        verbs::derive_append::validate_derived_origins_in_tx(
+            tx,
+            &draft,
+            &new_origins,
+            &new_references,
+        )
+        .await?;
+        verbs::derive_append::validate_derived_reference_kinds_in_tx(
+            tx,
+            &draft,
+            &new_origins,
+            &new_references,
+        )
+        .await?;
         let outcome = verbs::derive_append::append_derived_with_content_payloads_in_tx(
-            &mut self.tx,
+            tx,
             permit,
             &draft,
             verbs::derive_append::DerivedAdmissionInput {
@@ -528,7 +539,7 @@ impl WriteSession for PgWriteSession {
         .await?;
         if !outcome.idempotent_replay {
             verbs::sketch::upsert_sketch(
-                &mut self.tx,
+                tx,
                 permit.owner().into_inner(),
                 outcome.memory_id.into_inner(),
                 req.kind.into(),
@@ -541,7 +552,7 @@ impl WriteSession for PgWriteSession {
             .await?;
         }
         let edge_count = verbs::derive_append::assert_derived_index_rows(
-            &mut self.tx,
+            tx,
             &draft,
             &outcome,
             req.origins,
@@ -550,7 +561,7 @@ impl WriteSession for PgWriteSession {
         .await?;
         let edge_count = edge_count.saturating_add(
             verbs::derive_append::record_external_edges(
-                &mut self.tx,
+                tx,
                 &outcome,
                 req.external_origins,
                 req.external_references,
@@ -573,7 +584,7 @@ impl WriteSession for PgWriteSession {
         permit: &OwnerWritePermit,
     ) -> Result<Option<GoalReplayOutcome>, StorageError> {
         super::validate_permit_owner(permit, &req.owner())?;
-        verbs::goal_write::resolve_goal_command_replay_on(self.tx.as_mut(), req).await
+        verbs::goal_write::resolve_goal_command_replay_on(self.tx_mut()?.as_mut(), req).await
     }
 
     async fn create_goal(
@@ -581,14 +592,11 @@ impl WriteSession for PgWriteSession {
         req: &CreateGoalAtomicRequest<'_>,
         permit: &OwnerWritePermit,
     ) -> Result<GoalWriteOutcome, StorageError> {
-        verbs::goal_write::create_goal_in_tx(
-            &mut self.tx,
-            &self.sidecars,
-            req,
-            permit,
-            self.store_number,
-        )
-        .await
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
+        verbs::goal_write::create_goal_in_tx(tx, &self.sidecars, req, permit, self.store_number)
+            .await
     }
 
     async fn apply_host_state(
@@ -622,18 +630,12 @@ impl WriteSession for PgWriteSession {
                 )));
             }
         }
-        crate::access::fences::lock_owner_fence_shared_tx(&mut self.tx, permit.owner()).await?;
+        let tx = self.tx_mut()?;
+        crate::access::fences::lock_owner_fence_shared_tx(tx, permit.owner()).await?;
         // The participant runs on the unit's own transaction.
         registered
             .participant
-            .apply(
-                &mut PgHostStateSession {
-                    tx: &mut self.tx,
-                    permit,
-                },
-                permit,
-                request,
-            )
+            .apply(&mut PgHostStateSession { tx, permit }, permit, request)
             .await
     }
 
@@ -645,6 +647,9 @@ impl WriteSession for PgWriteSession {
         let owner = permit.owner();
         let owner_id = owner.into_inner();
         let t = memory_id.into_inner();
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
         // Ownership and kind precondition: a `t` the caller does not own, or
         // of a kind outside the permit, is NotFound rather than a forget on
         // someone else's row. It runs in owner scope, before the forget
@@ -659,12 +664,11 @@ impl WriteSession for PgWriteSession {
         .bind(PgMemoryKind::labels(&verbs::forget::kinds_within(
             permit.authority().memory_limit(),
         )))
-        .fetch_optional(&mut *self.tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(map_err)?
         .ok_or(StorageError::NotFound)?;
-        verbs::forget::forget_memory(&mut self.tx, &self.sidecars, &self.surfaces, t, owner_id)
-            .await
+        verbs::forget::forget_memory(tx, &self.sidecars, &self.surfaces, t, owner_id).await
     }
 
     async fn erase_series(
@@ -683,30 +687,74 @@ impl WriteSession for PgWriteSession {
             ));
         }
         state.ran = true;
-        let (outcome, cold_purge) = verbs::series_erase::erase_series(
-            &mut self.tx,
+        let lock_vector_keys =
+            matches!(state.vectors, crate::vector_index::StoreVectors::Remote(_));
+        let pool = state.pool.clone();
+        let platform = state.platform.clone();
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
+        match verbs::series_erase::erase_series(
+            tx,
             &self.sidecars,
             &state.context,
             permit.owner(),
             request,
+            lock_vector_keys,
         )
-        .await?;
-        state.cold_purge = cold_purge;
-        Ok(outcome)
+        .await?
+        {
+            verbs::series_erase::SeriesEraseWork::InFlightIntents(intents) => {
+                // Roll back and drop the session transaction first so intent
+                // invalidation runs on a single connection with zero locks held,
+                // then surface typed `StorageError::Retryable` -> `SeriesEraseError::Retryable`.
+                let _ = self.tx.take();
+                crate::vector_index::invalidate_publish_intents(&pool, &platform, &intents).await?;
+                Err(StorageError::Retryable(
+                    "vector index publish intent invalidated for series erase; retry".into(),
+                ))
+            }
+            verbs::series_erase::SeriesEraseWork::Applied {
+                outcome,
+                cold_purge,
+                erased_entities,
+            } => {
+                state.cold_purge = cold_purge;
+                state.erased_entities = erased_entities;
+                Ok(outcome)
+            }
+        }
     }
 
     async fn commit(self: Box<Self>) -> Result<(), StorageError> {
-        let mut session = *self;
+        let session = *self;
+        let mut tx = session.tx.ok_or_else(|| {
+            StorageError::Internal("write session transaction is no longer open".into())
+        })?;
         // The erase is done only once the index deleted the vectors (#519).
         if let Some(state) = &session.series_erase {
-            crate::vector_index::settle_owner_debt(
-                session.tx.as_mut(),
+            match crate::vector_index::settle_entity_debt(
+                tx.as_mut(),
                 &state.vectors,
-                state.owner,
+                &state.erased_entities,
             )
-            .await?;
+            .await
+            {
+                Ok(()) => {}
+                Err(crate::vector_index::SettleDebtError::InFlightIntents(intents)) => {
+                    let pool = state.pool.clone();
+                    let platform = state.platform.clone();
+                    drop(tx);
+                    crate::vector_index::invalidate_publish_intents(&pool, &platform, &intents)
+                        .await?;
+                    return Err(StorageError::Retryable(
+                        "vector index publish intent invalidated for series erase; retry".into(),
+                    ));
+                }
+                Err(crate::vector_index::SettleDebtError::Storage(error)) => return Err(error),
+            }
         }
-        crate::write_wake::commit(session.tx).await?;
+        crate::write_wake::commit(tx).await?;
         // After commit and never before: a rollback after an object delete
         // would restore the upload row over destroyed bytes. A failed
         // purge leaves its `cold_purge_pending` row for the retry lane.

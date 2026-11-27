@@ -116,6 +116,7 @@ mod tests {
                 t,
                 lexical_score: lexical,
                 similarity_score: semantic,
+                similarity_generation: None,
             },
         )
     }
