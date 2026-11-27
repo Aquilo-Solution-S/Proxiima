@@ -57,7 +57,7 @@ toml = "1.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 # Enable the AWS-LC backend to avoid a panic at the first RS256 sign.
 # TLS and JWT use AWS-LC. S3 requests use regional SigV4.
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 aws-lc-rs = "1.15.0"
 base64 = "0.23"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
