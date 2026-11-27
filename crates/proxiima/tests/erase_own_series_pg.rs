@@ -1666,3 +1666,260 @@ async fn an_older_seed_commits_before_a_later_indivisible_one_is_refused() {
     })
     .await;
 }
+
+/// A remote `VectorIndex` that pauses the next `put_batch` call so a concurrent
+/// `erase_own_series` observes an active write-ahead publish intent.
+#[derive(Default)]
+struct PausableSeriesVectorIndex {
+    inner: proxiima_core::storage_ports::InMemoryVectorIndex,
+    pause_next: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl proxiima_core::storage_ports::VectorIndex for PausableSeriesVectorIndex {
+    async fn put_batch(
+        &self,
+        entries: &[proxiima_core::storage_ports::VectorPut<'_>],
+    ) -> Result<(), proxiima_core::storage_ports::VectorPutBatchError> {
+        if self
+            .pause_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.inner.put_batch(entries).await
+    }
+
+    async fn delete(
+        &self,
+        keys: &[proxiima_core::storage_ports::VectorKey],
+        fence: i64,
+    ) -> Result<(), proxiima_core::StorageError> {
+        self.inner.delete(keys, fence).await
+    }
+
+    async fn set_owner(
+        &self,
+        targets: &[proxiima_core::storage_ports::VectorMetadataTarget],
+        owner: OwnerId,
+        revision: i64,
+    ) -> Result<(), proxiima_core::StorageError> {
+        self.inner.set_owner(targets, owner, revision).await
+    }
+
+    async fn set_head(
+        &self,
+        targets: &[proxiima_core::storage_ports::VectorMetadataTarget],
+        is_head: bool,
+        revision: i64,
+    ) -> Result<(), proxiima_core::StorageError> {
+        self.inner.set_head(targets, is_head, revision).await
+    }
+
+    async fn nearest(
+        &self,
+        filter: &proxiima_core::storage_ports::VectorCandidateFilter,
+        query: &proxiima_core::SpaceVector,
+        window: u32,
+    ) -> Result<proxiima_core::storage_ports::VectorCandidatePage, proxiima_core::StorageError>
+    {
+        self.inner.nearest(filter, query, window).await
+    }
+
+    async fn entries(
+        &self,
+        after: Option<&proxiima_core::storage_ports::VectorKey>,
+        limit: u32,
+    ) -> Result<proxiima_core::storage_ports::VectorEntryPage, proxiima_core::StorageError> {
+        self.inner.entries(after, limit).await
+    }
+}
+
+/// Series erase against a remote vector index preserves typed
+/// `SeriesEraseError::Retryable` (HTTP 503) when encountering an active
+/// write-ahead publish intent, leaves `EraseMode::DryRun` side-effect-free,
+/// durably invalidates the intent on `EraseMode::Erase`, and succeeds cleanly
+/// on retry while fencing the delayed publisher.
+#[tokio::test]
+async fn series_erase_with_in_flight_remote_put_returns_typed_retryable_and_fences_publisher() {
+    use proxiima::spiice::{PgSidecarRegistry, SpiiceBundle, register_core_pg_sidecars};
+    use proxiima_core::storage_ports::{
+        EmbeddingWrite, EmbeddingWritePort, EmbeddingWriteProof, VectorIndex,
+    };
+    use proxiima_core::{
+        EmbeddableEntityRef, EmbeddingDim, EmbeddingSpace, MemoryKind, SpaceVector,
+    };
+    use proxiima_storage_pg::{PgPlatformScope, PgStorage, PgTuning};
+    use std::sync::Arc;
+
+    let db = example_engine::migrated_db("series_erase_remote_intent").await;
+    example_engine::initialize_store_number(&db)
+        .await
+        .expect("store number");
+    let mut registry = proxiima_core::SpiiceRegistry::new();
+    proxiima_example::ExampleSpiice::register(&mut registry).expect("example spiice");
+    let registry = registry.freeze_or_panic_for_tests();
+    let mut sidecars = PgSidecarRegistry::new();
+    register_core_pg_sidecars(&mut sidecars);
+    proxiima_example::ExampleSpiice::register_pg_sidecars(&mut sidecars);
+    let sidecars = sidecars
+        .freeze_against(&registry)
+        .expect("example sidecars");
+    let platform_pool =
+        example_engine::fixture_pool(db.platform_url(), example_engine::ENGINE_POOL_CONNECTIONS)
+            .await
+            .expect("platform pool");
+    let platform_scope =
+        PgPlatformScope::new(platform_pool, &["proxiima_core", "proxiima_example"])
+            .await
+            .expect("platform scope");
+    let index = Arc::new(PausableSeriesVectorIndex::default());
+    let pg = Arc::new(
+        PgStorage::connect_with_vector_index(
+            db.runtime_url(),
+            example_engine::engine_pool_config(),
+            PgTuning::default(),
+            platform_scope,
+            0,
+            index.clone(),
+        )
+        .await
+        .expect("pg storage with host vector index")
+        .with_sidecars(sidecars)
+        .await
+        .expect("sidecars")
+        .with_spiices(&registry),
+    );
+    let engine = Engine::new_or_panic_for_tests(registry, pg.clone().storage_ports());
+    let pool = example_engine::fixture_pool(&db.admin_url(), 2)
+        .await
+        .expect("admin pool");
+
+    let (owner, authz) = personal();
+    let notebook_id = proxiima_example::testkit::register_notebook(
+        &pool,
+        &proxiima_core::test_fixtures::owner_scope_for_tests(&[owner]),
+        owner,
+        "fixture notebook",
+    )
+    .await
+    .expect("notebook");
+    let target = ingest(&engine, &authz, owner, &note(notebook_id, "r1"), None).await;
+
+    index
+        .pause_next
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let pub_pg = pg.clone();
+    let publisher = tokio::spawn(async move {
+        let mut vals = vec![0.0_f32; 384];
+        vals[0] = 1.0;
+        let vecs = [SpaceVector::new(
+            EmbeddingSpace::new("series-erase-test", EmbeddingDim::D384),
+            vals,
+        )
+        .unwrap()];
+        pub_pg
+            .insert_embeddings(&[EmbeddingWrite {
+                owner: &owner,
+                entity: EmbeddableEntityRef::Memory {
+                    kind: MemoryKind::Fact,
+                    memory_id: target,
+                },
+                vectors: &vecs,
+                proof: EmbeddingWriteProof::for_direct_write_for_tests(),
+            }])
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), index.entered.notified())
+        .await
+        .expect("publisher reached put_batch");
+
+    // DryRun must report the series without disturbing the active publish intent.
+    let dry = erase(
+        &engine,
+        &authz,
+        owner,
+        SeriesSelection::Ids(vec![target]),
+        EraseMode::DryRun,
+    )
+    .await
+    .expect("dry run succeeds");
+    assert_eq!(dry.versions, [target]);
+    let intents_after_dry: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM proxiima_core.vector_index_debt
+          WHERE entity_id = $1 AND generation > 0",
+    )
+    .bind(target.into_inner())
+    .fetch_one(&pool)
+    .await
+    .expect("intent count");
+    assert_eq!(intents_after_dry, 1, "dry run must not invalidate intent");
+
+    // First Erase attempt durably invalidates the intent and returns typed `Retryable` (not Protocol internal).
+    let first = erase(
+        &engine,
+        &authz,
+        owner,
+        SeriesSelection::Ids(vec![target]),
+        EraseMode::Erase,
+    )
+    .await;
+    assert!(
+        matches!(first, Err(SeriesEraseError::Retryable(_))),
+        "expected typed SeriesEraseError::Retryable, got {first:?}"
+    );
+    let intents_after_first: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM proxiima_core.vector_index_debt
+          WHERE entity_id = $1 AND generation > 0",
+    )
+    .bind(target.into_inner())
+    .fetch_one(&pool)
+    .await
+    .expect("intent count");
+    assert_eq!(intents_after_first, 0);
+
+    // Retry commits cleanly and fences the provider key.
+    let second = erase(
+        &engine,
+        &authz,
+        owner,
+        SeriesSelection::Ids(vec![target]),
+        EraseMode::Erase,
+    )
+    .await
+    .expect("retry erase succeeds");
+    assert_eq!(second.versions, [target]);
+
+    // Release delayed publisher: provider fence rejects late put, and Tx 2 skips
+    // the already-erased entity (`embedding_version == 0`, no head committed).
+    index.release.notify_one();
+    let pub_result = tokio::time::timeout(std::time::Duration::from_secs(10), publisher)
+        .await
+        .expect("publisher joined")
+        .expect("publisher task ok")
+        .expect("erased target skips without committing a head");
+    assert_eq!(pub_result.len(), 1);
+    assert_eq!(pub_result[0].embedding_version, 0);
+    assert!(
+        index
+            .inner
+            .entries(None, 10)
+            .await
+            .expect("entries")
+            .entries
+            .is_empty(),
+        "delayed put must be fenced out of the remote index"
+    );
+    let heads: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM proxiima_core.embedding_heads WHERE entity_id = $1",
+    )
+    .bind(target.into_inner())
+    .fetch_one(&pool)
+    .await
+    .expect("heads count");
+    assert_eq!(heads, 0);
+    pool.close().await;
+}

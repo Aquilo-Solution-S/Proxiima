@@ -106,7 +106,8 @@ pub use publication::{
 pub use retention::RetentionPort;
 pub use vector_index::{
     CandidateBound, InMemoryVectorIndex, VectorCandidate, VectorCandidateFilter,
-    VectorCandidatePage, VectorEntry, VectorIndex, VectorKey,
+    VectorCandidatePage, VectorEntry, VectorEntryPage, VectorIndex, VectorIndexSweepOutcome,
+    VectorKey, VectorMetadataTarget, VectorPut, VectorPutBatchError,
 };
 pub use write_session::{
     SIDECAR_SESSION_READ_MAX_ROWS, SidecarSessionRead, WriteSession, WriteSessionFactory,

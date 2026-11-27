@@ -2168,7 +2168,7 @@ async fn a_store_keeps_its_vectors_in_a_host_index_over_the_wire() {
             (moved.clone(), fixture.personal),
         ];
         expected.sort();
-        assert_eq!(owners(index.entries(None, 10).await?), expected);
+        assert_eq!(owners(index.entries(None, 10).await?.entries), expected);
         let extension: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')",
         )
@@ -2193,7 +2193,7 @@ async fn a_store_keeps_its_vectors_in_a_host_index_over_the_wire() {
             .await?;
         engine.drain_embedding_jobs(10).await?;
         assert_eq!(
-            owners(index.entries(None, 10).await?),
+            owners(index.entries(None, 10).await?.entries),
             vec![(moved.clone(), fixture.shared)],
             "the forgotten entry goes and the transferred one follows its owner"
         );
@@ -2226,29 +2226,37 @@ struct RendezvousIndex {
 
 #[async_trait::async_trait]
 impl VectorIndex for RendezvousIndex {
-    async fn put(
+    async fn put_batch(
         &self,
-        entity: proxiima_core::EmbeddableEntityRef,
-        owner: OwnerId,
-        version: i32,
-        vectors: &[proxiima_core::SpaceVector],
-    ) -> Result<(), proxiima_core::StorageError> {
-        self.inner.put(entity, owner, version, vectors).await
+        entries: &[proxiima_core::storage_ports::VectorPut<'_>],
+    ) -> Result<(), proxiima_core::storage_ports::VectorPutBatchError> {
+        self.inner.put_batch(entries).await
     }
 
     async fn delete(
         &self,
         keys: &[proxiima_core::storage_ports::VectorKey],
+        fence: i64,
     ) -> Result<(), proxiima_core::StorageError> {
-        self.inner.delete(keys).await
+        self.inner.delete(keys, fence).await
     }
 
     async fn set_owner(
         &self,
-        keys: &[proxiima_core::storage_ports::VectorKey],
+        targets: &[proxiima_core::storage_ports::VectorMetadataTarget],
         owner: OwnerId,
+        revision: i64,
     ) -> Result<(), proxiima_core::StorageError> {
-        self.inner.set_owner(keys, owner).await
+        self.inner.set_owner(targets, owner, revision).await
+    }
+
+    async fn set_head(
+        &self,
+        targets: &[proxiima_core::storage_ports::VectorMetadataTarget],
+        is_head: bool,
+        revision: i64,
+    ) -> Result<(), proxiima_core::StorageError> {
+        self.inner.set_head(targets, is_head, revision).await
     }
 
     async fn nearest(
@@ -2272,7 +2280,7 @@ impl VectorIndex for RendezvousIndex {
         &self,
         after: Option<&proxiima_core::storage_ports::VectorKey>,
         limit: u32,
-    ) -> Result<Vec<proxiima_core::storage_ports::VectorEntry>, proxiima_core::StorageError> {
+    ) -> Result<proxiima_core::storage_ports::VectorEntryPage, proxiima_core::StorageError> {
         self.inner.entries(after, limit).await
     }
 }

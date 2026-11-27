@@ -261,6 +261,9 @@ pub struct SeriesEraseRequest<'a> {
     pub sidecar_table: Option<&'a str>,
     pub max_series: usize,
     pub max_versions: usize,
+    /// Whether this call will commit (`Erase`) or roll back (`DryRun`), so the
+    /// backend never invalidates committed write-ahead state on a dry run.
+    pub mode: EraseMode,
 }
 
 /// What the backend erased, before commit.

@@ -573,3 +573,147 @@ fn the_merge_admits_only_spiices_that_declare_a_comparable_shape() {
     foreign.tag_column = Some("tags".into());
     assert!(reaches(&request, &foreign));
 }
+
+async fn insert_test_vector(
+    pg: &crate::PgStorage,
+    owner: OwnerId,
+    entity: uuid::Uuid,
+    space: &proxiima_core::EmbeddingSpace,
+    x: f32,
+) -> i64 {
+    use proxiima_core::storage_ports::{EmbeddingWrite, EmbeddingWritePort, EmbeddingWriteProof};
+    use proxiima_core::{EmbeddableEntityRef, MemoryId, MemoryKind, SpaceVector};
+
+    let mut values = vec![0.0_f32; 384];
+    values[0] = x;
+    values[1] = (1.0 - x * x).max(0.0).sqrt();
+    let vecs = [SpaceVector::new(space.clone(), values).unwrap()];
+    pg.insert_embeddings(&[EmbeddingWrite {
+        owner: &owner,
+        entity: EmbeddableEntityRef::Memory {
+            kind: MemoryKind::Fact,
+            memory_id: MemoryId::new(entity),
+        },
+        vectors: &vecs,
+        proof: EmbeddingWriteProof::for_direct_write_for_tests(),
+    }])
+    .await
+    .unwrap();
+    sqlx::query_scalar(
+        "SELECT vector_generation FROM proxiima_core.embedding_heads WHERE entity_id = $1",
+    )
+    .bind(entity)
+    .fetch_one(pg.pool_for_tests())
+    .await
+    .unwrap()
+}
+
+/// Final hybrid admission re-checks each remote semantic score's generation in
+/// the final MVCC snapshot: if `G+1` committed between the semantic leg and
+/// final admission, the superseded score is cleared (excluding semantic-only
+/// hits and preventing stale semantic RRF ranks) while any independently
+/// admitted lexical hit survives intact.
+#[tokio::test]
+async fn hybrid_admission_drops_superseded_remote_generation_and_preserves_lexical_hit() {
+    use proxiima_core::storage_ports::InMemoryVectorIndex;
+    use proxiima_core::{EmbeddingDim, EmbeddingSpace, SpaceVector, UserId};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    let index = Arc::new(InMemoryVectorIndex::default());
+    let (pg, _db) =
+        crate::test_fixtures::fresh_pg_host_index("hybrid_stale_gen", index.clone()).await;
+    let owner = OwnerId::from(UserId::new(uuid::Uuid::now_v7()));
+    let scope = proxiima_core::test_fixtures::owner_scope_for_tests(&[owner]);
+    let space = EmbeddingSpace::new("hybrid-gen", EmbeddingDim::D384);
+    let seed = |title: &str| {
+        let pg = pg.clone();
+        let title = title.to_owned();
+        async move {
+            crate::test_fixtures::TestNote::new(&title, "body")
+                .create(&pg, owner)
+                .await
+                .unwrap()
+                .memory_id
+                .into_inner()
+        }
+    };
+    let both_superseded = seed("needle").await;
+    let semantic_only_superseded = seed("unrelated").await;
+    let both_current = seed("needle").await;
+    let g_both_old = insert_test_vector(&pg, owner, both_superseded, &space, 0.6).await;
+    let g_sem_old = insert_test_vector(&pg, owner, semantic_only_superseded, &space, 0.6).await;
+    let g_cur = insert_test_vector(&pg, owner, both_current, &space, 0.6).await;
+
+    // Commit G+1 for the two superseded memories between semantic leg and final admission.
+    let _ = insert_test_vector(&pg, owner, both_superseded, &space, 0.99).await;
+    let _ = insert_test_vector(&pg, owner, semantic_only_superseded, &space, 0.99).await;
+
+    let mut req = request_with_tags();
+    req.read_owners = vec![owner];
+    req.scope = proxiima_core::verbs::query::MemorySearchScope::Owner(owner);
+    req.mode = SearchMode::Hybrid;
+    req.tags.clear();
+    let mut query_vals = vec![0.0_f32; 384];
+    query_vals[0] = 1.0;
+    req.semantic = Some(SpaceVector::new(space, query_vals).unwrap());
+
+    let mut hits = BTreeMap::from([
+        (
+            both_superseded,
+            super::Hit {
+                t: both_superseded,
+                lexical_score: Some(0.8),
+                similarity_score: Some(0.95),
+                similarity_generation: Some(g_both_old),
+            },
+        ),
+        (
+            semantic_only_superseded,
+            super::Hit {
+                t: semantic_only_superseded,
+                lexical_score: None,
+                similarity_score: Some(0.99),
+                similarity_generation: Some(g_sem_old),
+            },
+        ),
+        (
+            both_current,
+            super::Hit {
+                t: both_current,
+                lexical_score: Some(0.5),
+                similarity_score: Some(0.75),
+                similarity_generation: Some(g_cur),
+            },
+        ),
+    ]);
+    let mut tx = crate::owner_scope::begin_owner_transaction(pg.pool_for_tests(), &scope)
+        .await
+        .unwrap();
+    let vectors = crate::vector_index::StoreVectors::Remote(index);
+    let mut admitted = super::admit_hits_on_connection(tx.as_mut(), &req, &mut hits, &vectors)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    super::hybrid::apply_hybrid_fusion(&req, &mut admitted, &hits);
+
+    let by_id: BTreeMap<uuid::Uuid, _> = admitted
+        .into_iter()
+        .map(|row| (row.memory_id.into_inner(), row))
+        .collect();
+    assert!(!by_id.contains_key(&semantic_only_superseded));
+    let preserved = by_id
+        .get(&both_superseded)
+        .expect("independently admitted lexical hit must be preserved");
+    assert_eq!(preserved.similarity_score.to_bits(), 0.0_f32.to_bits());
+    assert_eq!(preserved.lexical_score.to_bits(), 0.8_f32.to_bits());
+    assert_eq!(preserved.score.to_bits(), (0.5_f32 / 61.0_f32).to_bits());
+    let current = by_id
+        .get(&both_current)
+        .expect("current generation hit stays admitted");
+    assert_eq!(current.similarity_score.to_bits(), 0.75_f32.to_bits());
+    assert_eq!(
+        current.score.to_bits(),
+        (0.5_f32 / 61.0_f32 + 0.5_f32 / 62.0_f32).to_bits(),
+    );
+}

@@ -341,7 +341,7 @@ macro_rules! ledger {
     (Proxiima.Embeddings.reconcileDefaultLimit) => {
         50000
     };
-    // Page cardinality and downstream probes per head relation in one reconcile page.
+    // Page cardinality and downstream probes per head relation in one reconcile or host-index sweep page.
     (Proxiima.Embeddings.reconcilePageSize) => {
         2000
     };
@@ -420,6 +420,26 @@ macro_rules! ledger {
     // The environment sequence expanded to a newline in the query template.
     (Proxiima.Embeddings.queryNewlineEscape) => {
         "\\n"
+    };
+    // Keys in one host-index call, so a call's body stays small however many heads one transaction changed.
+    (Proxiima.Embeddings.hostIndexKeysPerCall) => {
+        500
+    };
+    // Seconds a publish intent or a debt drain claim holds its lease before a drain may reclaim it.
+    (Proxiima.Embeddings.debtLeaseSeconds) => {
+        60
+    };
+    // Seconds between lease renewals of a live publication or debt drain.
+    (Proxiima.Embeddings.debtLeaseRenewSeconds) => {
+        20
+    };
+    // Smallest keyset page one debt drain or unsent-intent reconcile scans.
+    (Proxiima.Embeddings.debtScanMinPage) => {
+        64
+    };
+    // Suspect keys one host-index sweep repairs per transaction.
+    (Proxiima.Embeddings.sweepRepairsPerTransaction) => {
+        50
     };
     // The shortest configurable retention in days.
     (Proxiima.ErasureExport.minKeepDays) => {

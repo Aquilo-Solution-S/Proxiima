@@ -1444,6 +1444,7 @@ impl<'a> UnitOfWork<'a> {
             sidecar_table,
             max_series: MAX_ERASE_SERIES_PER_CALL,
             max_versions: MAX_ERASE_VERSIONS_PER_CALL,
+            mode,
         };
         // Spent from here on, whatever the outcome: the session below is the
         // erase's, and nothing else may run on it.

@@ -305,12 +305,13 @@ inductive VectorOperation where
   | put
   | delete
   | owner
+  | head
   | nearest
   | entries
   deriving DecidableEq
 
 /-- The typed POST operations exposed by the vector index router. -/
-def vectorOperations : List VectorOperation := [.put, .delete, .owner, .nearest, .entries]
+def vectorOperations : List VectorOperation := [.put, .delete, .owner, .head, .nearest, .entries]
 
 /-- The branch that prices an index HTTP result. -/
 inductive VectorHttpResult where
@@ -325,6 +326,51 @@ def vectorErrorStatus : VectorHttpResult → Nat
   | .unavailable => 503
   | .unknownStore => 404
 
+/-- How an incoming generation or revision compares with the value the index holds for its key. -/
+inductive Compared where
+  | older | same | newer
+  deriving DecidableEq
+
+/-- A put lands only with a generation newer than the key's floor: its stored generation and its delete fence. -/
+def putLands : Compared → Bool
+  | .newer => true
+  | .same | .older => false
+
+/-- A fenced delete removes a stored entry whose generation is not newer than the fence. -/
+def deleteRemoves : (storedVsFence : Compared) → Bool
+  | .older | .same => true
+  | .newer => false
+
+/-- An owner or head update lands only on the exact stored generation, with a revision newer than that field's own stored revision. -/
+def metadataLands : (target : Compared) → (revision : Compared) → Bool
+  | .same, .newer => true
+  | .same, .same | .same, .older
+  | .older, .older | .older, .same | .older, .newer
+  | .newer, .older | .newer, .same | .newer, .newer => false
+
+/-- An owner or head update aimed at another generation never lands, whatever its revision. -/
+theorem metadata_needs_the_exact_generation (revision : Compared) :
+    metadataLands .older revision = false ∧ metadataLands .newer revision = false := by
+  cases revision <;> decide
+
+/-- The `unsent_indices` a refused `/put` body carries, measured against its request's entries. -/
+inductive UnsentIndices where
+  | absent | inRange | outOfRange
+  deriving DecidableEq
+
+/-- Which entries of a refused `/put` request the client treats as never dispatched. -/
+inductive UnsentReading where
+  | every
+  | listed
+  /-- None: every entry keeps its fenced delete cleanup. -/
+  | uncertain
+  deriving DecidableEq
+
+/-- `all_unsent` alone marks every entry and in-range indices alone mark theirs; both together or an index out of range leave the request uncertain. -/
+def putUnsentReading : (allUnsent : Bool) → UnsentIndices → UnsentReading
+  | true, .absent => .every
+  | false, .inRange => .listed
+  | true, .inRange | true, .outOfRange | false, .absent | false, .outOfRange => .uncertain
 
 /-- Default ranking mode when the search request omits it. -/
 def defaultMode : SearchMode := .hybrid

@@ -1911,9 +1911,46 @@ stateDiagram-v2
 
 **Host write**: The order of host-index publication for an embedding key.
 
-- settleDebt
+- writeIntent
 - pushVersion
-- commit
+- commitHead
+
+**Put delivery**: What the index reported about one entry of a failed put batch.
+
+- uncertain: The index may have written the entry.
+- unsent: The index proved it never dispatched the entry.
+
+**Intent row**: What failure cleanup finds on the entry's intent row.
+
+- unlocked: The row still carries this publication's generation, and cleanup locked it without waiting.
+- heldOrSuperseded: Another transaction holds the row, or a newer publication took it over.
+- invalidated: No row carries this publication's generation or a newer one: a purge or a drain settled the key.
+
+**Failed put step**: The cleanup step for one entry of a failed put batch.
+
+- oweDelete: Owe a delete now, so the drain removes a partial write without waiting for the lease.
+- restorePrior: Give the key back the debt it carried before this publication staged its intent.
+- leaveToLease: Leave the intent to its holder; it stays owed as a delete once its lease lapses.
+- recordUnsent: Record the unsent intent durably for the drain or the next publication to restore.
+- keepSettled: Keep the debt that settled the key, and record nothing.
+
+**Index debt**: The settled debt a host-index key can owe.
+
+- delete
+- owner
+- head
+
+**Unsent prior**: The debt an unsent key carried before its publication staged an intent, after its unsent predecessors are walked.
+
+- absent
+- live: An earlier publication's intent whose outcome no unsent record resolves.
+- settled
+
+**Unsent restore**: What restoring an unsent key's prior debt leaves on the key.
+
+- drop: No debt: the key is as it was before the publication.
+- owe
+- restoreLive: The live predecessor's intent returns with a fresh lease.
 
 **Index repair**: Stages of repairing a host-index key during reconciliation.
 
@@ -1995,7 +2032,7 @@ stateDiagram-v2
 
 **reconcile default limit** = 50000: Default candidate budget for startup and engine reconciliation.
 
-**reconcile page size** = 2000: Page cardinality and downstream probes per head relation in one reconcile page.
+**reconcile page size** = 2000: Page cardinality and downstream probes per head relation in one reconcile or host-index sweep page.
 
 **reconcile owner page size** = 1000: Number of owners routed per reconcile owner page.
 
@@ -2041,7 +2078,17 @@ stateDiagram-v2
 
 **publish chunks** = \[settleFencedClaim, lockHead, appendOrderedChunks, advanceHead]: Publish ordered chunks and advance the head in the same transaction as fenced completion.
 
-**host publication** = \[settleDebt, pushVersion, commit]: Old key debt is settled before the new version is pushed and accepted before completion.
+**host publication** = \[writeIntent, pushVersion, commitHead]: Durable delete intent with a monotonic generation commits before pushing to the host index, and the head commits only if that intent still owns the key.
+
+**host index keys per call** = 500: Keys in one host-index call, so a call's body stays small however many heads one transaction changed.
+
+**debt lease seconds** = 60: Seconds a publish intent or a debt drain claim holds its lease before a drain may reclaim it.
+
+**debt lease renew seconds** = 20: Seconds between lease renewals of a live publication or debt drain.
+
+**debt scan min page** = 64: Smallest keyset page one debt drain or unsent-intent reconcile scans.
+
+**sweep repairs per transaction** = 50: Suspect keys one host-index sweep repairs per transaction.
 
 **index repair** = \[comparePages, lockKey, compareCurrentHead, repair]: A page difference authorizes repair only after the key lock and a fresh head comparison.
 
@@ -2210,6 +2257,42 @@ stateDiagram-v2
 
 - reconcile job: Missing coverage can open a job or reopen a retryable failure.
 
+| put delivery | intent row | failed put step |
+| --- | --- | --- |
+| uncertain | unlocked | oweDelete |
+| uncertain | heldOrSuperseded | leaveToLease |
+| uncertain | invalidated | keepSettled |
+| unsent | unlocked | restorePrior |
+| unsent | heldOrSuperseded | recordUnsent |
+| unsent | invalidated | keepSettled |
+
+- failed put step: An uncertain entry owes a delete and an unsent one restores its prior debt; a held row is left to its lease or recorded as unsent; an invalidated intent keeps the debt that settled it.
+
+| owner moved | head flipped | unsent prior | unsent restore |
+| --- | --- | --- | --- |
+| yes | yes | absent | owe (owner) |
+| yes | yes | live | restoreLive |
+| yes | yes | settled (delete) | owe (delete) |
+| yes | yes | settled (owner) | owe (owner) |
+| yes | yes | settled (head) | owe (owner) |
+| yes | no | absent | owe (owner) |
+| yes | no | live | restoreLive |
+| yes | no | settled (delete) | owe (delete) |
+| yes | no | settled (owner) | owe (owner) |
+| yes | no | settled (head) | owe (owner) |
+| no | yes | absent | owe (head) |
+| no | yes | live | restoreLive |
+| no | yes | settled (delete) | owe (delete) |
+| no | yes | settled (owner) | owe (owner) |
+| no | yes | settled (head) | owe (head) |
+| no | no | absent | drop |
+| no | no | live | restoreLive |
+| no | no | settled (delete) | owe (delete) |
+| no | no | settled (owner) | owe (owner) |
+| no | no | settled (head) | owe (head) |
+
+- unsent restore: A pending delete is never weakened, an owner move outranks a head flip, and either one turns a dropped intent into debt.
+
 | space role | job state | purge job |
 | --- | --- | --- |
 | current | pending | no |
@@ -2256,6 +2339,10 @@ stateDiagram-v2
 | other | transient |
 
 - bad request probe: A sentinel that embeds proves an input refusal, a refused sentinel a configuration fault; anything else is transient.
+
+✓ **an invalidated intent keeps its settled debt**: A failed put never restores or records an intent a purge or a drain already settled.
+
+✓ **an owner move survives an unsent restore**: An owner move during a failed put is never restored as no debt or as a head update.
 
 ## Erasure and export
 
@@ -6777,6 +6864,7 @@ stateDiagram-v2
 - put
 - delete
 - owner
+- head
 - nearest
 - entries
 
@@ -6785,6 +6873,24 @@ stateDiagram-v2
 - refused
 - unavailable
 - unknownStore
+
+**Compared**: How an incoming generation or revision compares with the value the index holds for its key.
+
+- older
+- same
+- newer
+
+**Unsent indices**: The `unsent_indices` a refused `/put` body carries, measured against its request's entries.
+
+- absent
+- inRange
+- outOfRange
+
+**Unsent reading**: Which entries of a refused `/put` request the client treats as never dispatched.
+
+- every
+- listed
+- uncertain: None: every entry keeps its fenced delete cleanup.
 
 **Tag filter stage**: Search tag processing stages.
 
@@ -6925,7 +7031,7 @@ stateDiagram-v2
 
 **vector entry keys** = \[entityId, model, dimension]: Page vector entries strictly after entity ID, model and dimension.
 
-**vector operations** = \[put, delete, owner, nearest, entries]: The typed POST operations exposed by the vector index router.
+**vector operations** = \[put, delete, owner, head, nearest, entries]: The typed POST operations exposed by the vector index router.
 
 **default mode** = hybrid: Default ranking mode when the search request omits it.
 
@@ -7055,6 +7161,47 @@ stateDiagram-v2
 
 - vector error status: Dispatch distinguishes input or index refusal, backend unavailability and unknown stores.
 
+| compared | put lands |
+| --- | --- |
+| older | no |
+| same | no |
+| newer | yes |
+
+- put lands: A put lands only with a generation newer than the key's floor: its stored generation and its delete fence.
+
+| stored vs fence | delete removes |
+| --- | --- |
+| older | yes |
+| same | yes |
+| newer | no |
+
+- delete removes: A fenced delete removes a stored entry whose generation is not newer than the fence.
+
+| target | revision | metadata lands |
+| --- | --- | --- |
+| older | older | no |
+| older | same | no |
+| older | newer | no |
+| same | older | no |
+| same | same | no |
+| same | newer | yes |
+| newer | older | no |
+| newer | same | no |
+| newer | newer | no |
+
+- metadata lands: An owner or head update lands only on the exact stored generation, with a revision newer than that field's own stored revision.
+
+| all unsent | unsent indices | put unsent reading |
+| --- | --- | --- |
+| yes | absent | every |
+| yes | inRange | uncertain |
+| yes | outOfRange | uncertain |
+| no | absent | uncertain |
+| no | inRange | listed |
+| no | outOfRange | uncertain |
+
+- put unsent reading: `all_unsent` alone marks every entry and in-range indices alone mark theirs; both together or an index out of range leave the request uncertain.
+
 | search mode | no rows | has positive semantic score | warns on lexical degradation |
 | --- | --- | --- | --- |
 | lexical | yes | yes | no |
@@ -7140,6 +7287,8 @@ stateDiagram-v2
 | no | no | yes |
 
 - retire configuration: The retirement routine may remove a non-default configuration without references.
+
+✓ **metadata needs the exact generation**: An owner or head update aimed at another generation never lands, whatever its revision.
 
 ## Tool surface
 
@@ -8431,3 +8580,17 @@ Causa — Schema evolution
 ## Transport timing
 
 ✓ **heartbeat before idle** (axioms: `propext`, `Quot.sound`): A positive idle timeout strictly above the progress floor admits a heartbeat before the deadline.
+
+## Host-index leases and revision-fenced metadata
+
+✓ **debt lease survives a missed renewal** (axioms: none): A publication or drain that misses one lease renewal still renews before its lease lapses.
+
+- Definition **compared**: How an incoming revision compares with the stored one.
+
+- Definition **update**: Apply an update aimed at the stored generation under `Proxiima.Search.metadataLands`.
+
+✓ **lands iff newer** (axioms: `propext`, `Quot.sound`): An update lands exactly when its revision is newer than the stored one.
+
+✓ **update eq** (axioms: `propext`, `Quot.sound`): An update replaces the field exactly when its revision is newer.
+
+✓ **update comm** (axioms: `propext`, `Classical.choice`, `Quot.sound`): Updates with distinct revisions leave the same field whichever the index receives first.

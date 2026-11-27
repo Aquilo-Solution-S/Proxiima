@@ -579,6 +579,9 @@ SELECT proxiima_core.owner_rls_apply_class(
 SELECT proxiima_core.owner_rls_apply_class(
     'policies.sql', 'class ownerless', 'proxiima_core', 'maintenance_lease', 'ownerless', NULL);
 
+SELECT proxiima_core.owner_rls_apply_class(
+    'policies.sql', 'class ownerless', 'proxiima_core', 'vector_index_unsent_intents', 'ownerless', NULL);
+
 -- vector_index_debt: read and written at its entity's kind, as its head is;
 -- the platform scope drains it.
 SELECT proxiima_core.owner_rls_apply_class('policies.sql', 'class owner_id', 'proxiima_core', 'vector_index_debt', 'owner_id', 'owner_id');

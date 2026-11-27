@@ -91,6 +91,21 @@ struct Hit {
     // Membership is distinct from a zero raw score.
     lexical_score: Option<f32>,
     similarity_score: Option<f32>,
+    /// Committed generation verified for a remote `VectorIndex` score;
+    /// re-validated in final hybrid admission so a score from generation `G`
+    /// cannot survive after `G+1` commits between the two reads.
+    similarity_generation: Option<i64>,
+}
+
+impl Hit {
+    fn lexical(t: uuid::Uuid, score: f32) -> Self {
+        Self {
+            t,
+            lexical_score: Some(score.max(0.0)),
+            similarity_score: None,
+            similarity_generation: None,
+        }
+    }
 }
 
 /// The ranked arm's row. `schema_id` rides along because the substring arm's
@@ -121,6 +136,13 @@ struct AdmitRow {
     schema_id: String,
     created_at: time::OffsetDateTime,
     occurred_at: Option<time::OffsetDateTime>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct HybridAdmitRow {
+    #[sqlx(flatten)]
+    base: AdmitRow,
+    similarity_current: bool,
 }
 
 /// Request search on a caller-owned transaction connection. All candidate,
@@ -169,7 +191,7 @@ pub(crate) async fn search_memories_on_connection(
                 &mut hits,
                 scan_spiices_on_connection(connection.as_mut(), req, &spiices, limit, true).await?,
             );
-            admit_hits_on_connection(connection.as_mut(), req, &hits.rows).await?
+            admit_hits_on_connection(connection.as_mut(), req, &mut hits.rows, vectors).await?
         }
         SearchMode::Semantic => {
             let semantic = scan_embeddings_on_connection(
@@ -205,7 +227,7 @@ pub(crate) async fn search_memories_on_connection(
                 .await?;
                 merge_hits(&mut hits, semantic.batch);
             }
-            admit_hits_on_connection(connection.as_mut(), req, &hits.rows).await?
+            admit_hits_on_connection(connection.as_mut(), req, &mut hits.rows, vectors).await?
         }
     };
     if uses_hybrid_fusion(req) {
@@ -522,7 +544,7 @@ async fn listing_on_connection(
         }
         query = query.bind(narrowing.tags);
     }
-    let hits = query
+    let mut hits = query
         .fetch_all(&mut *connection)
         .await
         .map_err(map_err)?
@@ -534,11 +556,18 @@ async fn listing_on_connection(
                     t,
                     lexical_score: None,
                     similarity_score: None,
+                    similarity_generation: None,
                 },
             )
         })
         .collect();
-    let admitted = admit_hits_on_connection(connection, req, &hits).await?;
+    let admitted = admit_hits_on_connection(
+        connection,
+        req,
+        &mut hits,
+        &crate::vector_index::StoreVectors::Local,
+    )
+    .await?;
     Ok(page_hits(req, limit, admitted, CandidateBound::Complete))
 }
 
@@ -603,8 +632,17 @@ fn merge_hits(into: &mut SearchHits, batch: HitBatch) {
             .entry(hit.t)
             .and_modify(|existing| {
                 existing.lexical_score = maximum_present(existing.lexical_score, hit.lexical_score);
-                existing.similarity_score =
-                    maximum_present(existing.similarity_score, hit.similarity_score);
+                match (existing.similarity_score, hit.similarity_score) {
+                    (Some(left), Some(right)) if right > left => {
+                        existing.similarity_score = Some(right);
+                        existing.similarity_generation = hit.similarity_generation;
+                    }
+                    (None, Some(right)) => {
+                        existing.similarity_score = Some(right);
+                        existing.similarity_generation = hit.similarity_generation;
+                    }
+                    _ => {}
+                }
             })
             .or_insert(hit);
     }
@@ -699,11 +737,7 @@ async fn scan_one_spiice_on_connection(
     let present: BTreeSet<&str> = rows.iter().map(|row| row.schema_id.as_str()).collect();
     let mut hits: Vec<Hit> = rows
         .iter()
-        .map(|row| Hit {
-            t: row.t,
-            lexical_score: Some(row.lexical_score.max(0.0)),
-            similarity_score: None,
-        })
+        .map(|row| Hit::lexical(row.t, row.lexical_score))
         .collect();
     // `Proxiima.Search.usesSubstring`.
     let missing: Vec<&MemorySearchProjection> = spiice
@@ -736,11 +770,10 @@ async fn scan_one_spiice_on_connection(
             .await
             .map_err(map_err)?;
         bound = bound.combine(statement_bound(rows.len(), budget));
-        hits.extend(rows.into_iter().map(|row| Hit {
-            t: row.t,
-            lexical_score: Some(row.lexical_score.max(0.0)),
-            similarity_score: None,
-        }));
+        hits.extend(
+            rows.into_iter()
+                .map(|row| Hit::lexical(row.t, row.lexical_score)),
+        );
     }
     if uses_hybrid_fusion(req) {
         // Ranked and optional substring statements share the spiice's cap.
@@ -1866,9 +1899,23 @@ fn tsquery_sql(multilingual: bool, template: &'static str, text: &'static str) -
 /// participating projections. The same memory predicate is used for final
 /// admission, so authorization and request filters have one author, and a
 /// semantic search pages the rows this statement returns.
+#[cfg(any(test, feature = "testkit"))]
 fn semantic_candidate_admission_sql(
     spiices: &[SpiiceScan<'_>],
     req: &MemorySearchRequest,
+) -> Result<SqlText, StorageError> {
+    semantic_candidate_admission_sql_mode(spiices, req, false)
+}
+
+/// Admit vector-port candidates in one MVCC snapshot. When
+/// `require_committed_generation` is true (host vector index), the same
+/// statement also joins each `(candidate_id, generation)` against
+/// `embedding_heads.vector_generation` so authorization, series-head status,
+/// and generation verification cannot observe two different snapshots.
+fn semantic_candidate_admission_sql_mode(
+    spiices: &[SpiiceScan<'_>],
+    req: &MemorySearchRequest,
+    require_committed_generation: bool,
 ) -> Result<SqlText, StorageError> {
     let op = tag_operator(req.tag_match);
     let schema_bind_base = if req.tags.is_empty() {
@@ -1917,6 +1964,36 @@ fn semantic_candidate_admission_sql(
     }
     let mut sql = search_admit_sql(matches!(req.supersession, SupersessionStatus::HeadsOnly));
     sql.push(" AND (").push_text(&projection_pred).push(")");
+    if require_committed_generation {
+        let base = usize::from(schema_bind_base.get()) + spiices.len();
+        let next_param = |offset: usize| {
+            u16::try_from(base + offset)
+                .ok()
+                .and_then(NonZeroU16::new)
+                .ok_or_else(|| StorageError::Internal("too many search parameters".into()))
+        };
+        let gen_bind = next_param(0)?;
+        let model_bind = next_param(1)?;
+        let dim_bind = next_param(2)?;
+        sql.push(
+            " AND EXISTS (
+                  SELECT 1
+                    FROM proxiima_core.embedding_heads eh
+                    JOIN unnest($1::uuid[], ",
+        )
+        .push_param(gen_bind)
+        .push(
+            "::bigint[]) AS cg(entity_id, generation)
+                      ON cg.entity_id = eh.entity_id
+                     AND cg.generation = eh.vector_generation
+                   WHERE eh.entity_id = m.t
+                     AND eh.model_id = ",
+        )
+        .push_param(model_bind)
+        .push(" AND eh.dim = ")
+        .push_param(dim_bind)
+        .push(" AND eh.vector_generation > 0)");
+    }
     Ok(sql)
 }
 
@@ -1944,6 +2021,7 @@ async fn remote_candidate_filter(
     Ok(proxiima_core::storage_ports::VectorCandidateFilter {
         owners: owners.into_iter().map(OwnerId::new).collect(),
         memories: memories.into_iter().map(MemoryId::new).collect(),
+        supersession: req.supersession,
     })
 }
 
@@ -1987,10 +2065,16 @@ async fn remote_nearest(
         VectorCandidateFilter {
             owners: filter.owners.clone(),
             memories: Vec::new(),
+            supersession: filter.supersession,
         },
         VectorCandidateFilter {
             owners: Vec::new(),
             memories: filter.memories.clone(),
+            // `filter.memories` is already resolved through
+            // `goal_visible_memory_heads()` for `HeadsOnly`, which may select
+            // an older version when a private global successor exists; never
+            // filter those exact IDs on global `is_head`.
+            supersession: SupersessionStatus::IncludeSuperseded,
         },
     ] {
         if route.owners.is_empty() && route.memories.is_empty() {
@@ -2007,7 +2091,12 @@ async fn remote_nearest(
             candidates
                 .entry(candidate.memory_id.into_inner())
                 .and_modify(|prior| {
-                    prior.similarity_score = prior.similarity_score.max(candidate.similarity_score);
+                    if candidate.generation > prior.generation
+                        || (candidate.generation == prior.generation
+                            && candidate.similarity_score > prior.similarity_score)
+                    {
+                        *prior = candidate;
+                    }
                 })
                 .or_insert(candidate);
         }
@@ -2044,7 +2133,9 @@ async fn scan_embeddings_on_connection(
         .iter()
         .map(|f| f.schemas.iter().map(|p| p.schema_id.as_str()).collect())
         .collect();
-    let sql = semantic_candidate_admission_sql(spiices, req)?;
+    let require_committed_generation =
+        matches!(vectors, crate::vector_index::StoreVectors::Remote(_));
+    let sql = semantic_candidate_admission_sql_mode(spiices, req, require_committed_generation)?;
     sqlx::raw_sql(set_hnsw_search_sql(tuning))
         .execute(connection.as_mut())
         .await
@@ -2061,7 +2152,7 @@ async fn scan_embeddings_on_connection(
     // found it. Each round admits all of them in one statement and the leg
     // returns the last round's: one snapshot, which keeps a candidate a later
     // window leaves out.
-    let mut discovered = BTreeMap::<uuid::Uuid, f32>::new();
+    let mut discovered = BTreeMap::<uuid::Uuid, (f32, i64)>::new();
     let (hits, admitted, bound) = loop {
         let candidates = match &candidates {
             SemanticCandidates::Local => {
@@ -2081,12 +2172,19 @@ async fn scan_embeddings_on_connection(
         let bound = candidates.bound;
         let candidates = candidates.candidates;
         let fetched = candidates.len();
-        discovered.extend(
-            candidates
-                .into_iter()
-                .map(|candidate| (candidate.memory_id.into_inner(), candidate.similarity_score)),
-        );
-        let candidate_ids: Vec<_> = discovered.keys().copied().collect();
+        discovered.extend(candidates.into_iter().map(|candidate| {
+            (
+                candidate.memory_id.into_inner(),
+                (candidate.similarity_score, candidate.generation),
+            )
+        }));
+        let candidate_ids: Vec<uuid::Uuid> = discovered.keys().copied().collect();
+        let candidate_generations: Vec<i64> = discovered
+            .values()
+            .map(|&(_, generation)| generation)
+            .collect();
+        let remote_generations =
+            require_committed_generation.then_some((candidate_generations.as_slice(), semantic));
         let admitted = admit_semantic_candidates_on_connection(
             connection.as_mut(),
             &sql,
@@ -2094,23 +2192,11 @@ async fn scan_embeddings_on_connection(
             &owner_ids,
             &schema_sets,
             &candidate_ids,
+            remote_generations,
         )
         .await?;
         // The statement reads discovered `t`s only, so each row has its hit.
-        let hits: BTreeMap<_, _> = discovered
-            .iter()
-            .filter(|(t, _)| admitted.contains_key(t))
-            .map(|(&t, &score)| {
-                (
-                    t,
-                    Hit {
-                        t,
-                        lexical_score: None,
-                        similarity_score: Some(score),
-                    },
-                )
-            })
-            .collect();
+        let hits = semantic_hits_for_admitted(&discovered, &admitted, require_committed_generation);
         let Some(next) = next_candidate_window(window, fetched, hits.len(), overfetch) else {
             break (hits, admitted, bound);
         };
@@ -2123,8 +2209,32 @@ async fn scan_embeddings_on_connection(
     Ok(SemanticHits { batch, admitted })
 }
 
+fn semantic_hits_for_admitted(
+    discovered: &BTreeMap<uuid::Uuid, (f32, i64)>,
+    admitted: &BTreeMap<uuid::Uuid, AdmitRow>,
+    require_committed_generation: bool,
+) -> BTreeMap<uuid::Uuid, Hit> {
+    discovered
+        .iter()
+        .filter(|(t, _)| admitted.contains_key(t))
+        .map(|(&t, &(score, generation))| {
+            (
+                t,
+                Hit {
+                    t,
+                    lexical_score: None,
+                    similarity_score: Some(score),
+                    similarity_generation: require_committed_generation.then_some(generation),
+                },
+            )
+        })
+        .collect()
+}
+
 /// The rows of `candidate_ids` that `sql`, the
-/// [`semantic_candidate_admission_sql`], admits, by `t`: one statement.
+/// [`semantic_candidate_admission_sql_mode`], admits, by `t`: one statement
+/// and one MVCC snapshot for authorization, supersession, and (for remote host
+/// indexes) committed `embedding_heads.vector_generation`.
 async fn admit_semantic_candidates_on_connection(
     connection: &mut PgConnection,
     sql: &SqlText,
@@ -2132,6 +2242,7 @@ async fn admit_semantic_candidates_on_connection(
     owner_ids: &[uuid::Uuid],
     schema_sets: &[Vec<&str>],
     candidate_ids: &[uuid::Uuid],
+    remote_generations: Option<(&[i64], &proxiima_core::SpaceVector)>,
 ) -> Result<BTreeMap<uuid::Uuid, AdmitRow>, StorageError> {
     if candidate_ids.is_empty() {
         return Ok(BTreeMap::new());
@@ -2149,15 +2260,56 @@ async fn admit_semantic_candidates_on_connection(
     for schema_ids in schema_sets {
         query = query.bind(schema_ids);
     }
+    if let Some((generations, semantic)) = remote_generations {
+        query = query
+            .bind(generations)
+            .bind(semantic.space().model_id())
+            .bind(crate::pgvector::Lane::of(semantic.space().dim()).width);
+    }
     let rows: Vec<AdmitRow> = query.fetch_all(connection).await.map_err(map_err)?;
     Ok(rows.into_iter().map(|row| (row.t, row)).collect())
 }
 
-/// Admit `hits` in one statement.
+/// Final hybrid admission for a remote vector index: wraps [`search_admit_sql`]
+/// in one statement and one MVCC snapshot so every remote semantic score's
+/// generation is re-checked against `embedding_heads.vector_generation` without
+/// duplicating authorization or supersession predicates.
+fn hybrid_remote_admit_sql(heads_only: bool) -> SqlText {
+    let mut sql = SqlText::new(
+        "SELECT base.t,
+                base.kind,
+                base.schema_id,
+                base.created_at,
+                base.occurred_at,
+                base.\"by\",
+                base.via,
+                EXISTS (
+                    SELECT 1
+                      FROM proxiima_core.embedding_heads eh
+                      JOIN unnest($1::uuid[], $7::bigint[]) AS cg(entity_id, generation)
+                        ON cg.entity_id = eh.entity_id
+                       AND cg.generation = eh.vector_generation
+                     WHERE eh.entity_id = base.t
+                       AND eh.model_id = $8
+                       AND eh.dim = $9
+                       AND eh.vector_generation > 0
+                ) AS similarity_current
+           FROM (",
+    );
+    sql.push_text(&search_admit_sql(heads_only)).push(") base");
+    sql
+}
+
+/// Admit `hits` in one statement. When `hits` carries remote semantic
+/// generations, re-validates each score's generation in the same admission
+/// snapshot: a superseded remote semantic score is cleared from `hits` (so
+/// hybrid fusion never spends a semantic rank on it), preserving any
+/// independently admitted lexical hit and dropping semantic-only stale hits.
 async fn admit_hits_on_connection(
     connection: &mut PgConnection,
     req: &MemorySearchRequest,
-    hits: &BTreeMap<uuid::Uuid, Hit>,
+    hits: &mut BTreeMap<uuid::Uuid, Hit>,
+    vectors: &crate::vector_index::StoreVectors,
 ) -> Result<Vec<MemorySearchResult>, StorageError> {
     if hits.is_empty() {
         return Ok(Vec::new());
@@ -2169,7 +2321,51 @@ async fn admit_hits_on_connection(
         .map(OwnerId::into_inner)
         .collect();
     let hit_ts: Vec<uuid::Uuid> = hits.keys().copied().collect();
-    let sql = search_admit_sql(matches!(req.supersession, SupersessionStatus::HeadsOnly));
+    let heads_only = matches!(req.supersession, SupersessionStatus::HeadsOnly);
+    let check_remote_generations = matches!(vectors, crate::vector_index::StoreVectors::Remote(_))
+        && req.semantic.is_some()
+        && hits.values().any(|hit| hit.similarity_generation.is_some());
+    if check_remote_generations && let Some(semantic) = req.semantic.as_ref() {
+        let generations: Vec<i64> = hit_ts
+            .iter()
+            .map(|t| {
+                hits.get(t)
+                    .and_then(|hit| hit.similarity_generation)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let sql = hybrid_remote_admit_sql(heads_only);
+        let rows: Vec<HybridAdmitRow> = sqlx::query_as(sql)
+            .bind(&hit_ts)
+            .bind(&owner_ids)
+            .bind(kind_literal(req.kind))
+            .bind(req.schema_id.as_ref().map(SchemaId::as_str))
+            .bind(req.since)
+            .bind(req.until)
+            .bind(&generations)
+            .bind(semantic.space().model_id())
+            .bind(crate::pgvector::Lane::of(semantic.space().dim()).width)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(map_err)?;
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            if let Some(hit) = hits.get_mut(&row.base.t) {
+                if hit.similarity_generation.is_some() && !row.similarity_current {
+                    hit.similarity_score = None;
+                    hit.similarity_generation = None;
+                }
+                if hit.lexical_score.is_none() && hit.similarity_score.is_none() {
+                    continue;
+                }
+            }
+            if let Some(result) = admit_row_to_result(req, hits, row.base) {
+                results.push(result);
+            }
+        }
+        return Ok(results);
+    }
+    let sql = search_admit_sql(heads_only);
     let rows: Vec<AdmitRow> = sqlx::query_as(sql)
         .bind(&hit_ts)
         .bind(&owner_ids)

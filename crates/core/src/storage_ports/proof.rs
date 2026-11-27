@@ -533,6 +533,13 @@ impl EmbeddingWriteProof {
         Self::for_claim(claim)
     }
 
+    /// Test-only constructor for exercising a backend's claimless direct write path.
+    #[cfg(any(test, feature = "testkit"))]
+    #[must_use]
+    pub const fn for_direct_write_for_tests() -> Self {
+        Self::new()
+    }
+
     /// The durable job id and per-claim fencing token, when this write was
     /// authorized by a queue claim rather than direct entity admission.
     #[must_use]

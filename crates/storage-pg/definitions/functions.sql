@@ -933,10 +933,15 @@ CREATE OR REPLACE FUNCTION proxiima_core.embedding_heads_deleted_index_debt() RE
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO proxiima_core.vector_index_debt (entity_id, model_id, dim, owner_id, op)
-    SELECT entity_id, model_id, dim, owner_id, 'delete' FROM deleted_heads
+    INSERT INTO proxiima_core.vector_index_debt
+        (entity_id, model_id, dim, owner_id, op, generation, moved_from_generation, enqueued_at)
+    SELECT entity_id, model_id, dim, owner_id, 'delete', 0, 0, clock_timestamp() FROM deleted_heads
     ON CONFLICT (entity_id, model_id, dim) DO UPDATE
-        SET owner_id = EXCLUDED.owner_id, op = EXCLUDED.op, enqueued_at = now(),
+        SET owner_id = EXCLUDED.owner_id,
+            op = EXCLUDED.op,
+            generation = 0,
+            moved_from_generation = 0,
+            enqueued_at = clock_timestamp(),
             xact = pg_current_xact_id();
     RETURN NULL;
 END;
@@ -946,10 +951,66 @@ CREATE OR REPLACE FUNCTION proxiima_core.embedding_head_moved_index_debt() RETUR
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO proxiima_core.vector_index_debt (entity_id, model_id, dim, owner_id, op)
-    VALUES (NEW.entity_id, NEW.model_id, NEW.dim, NEW.owner_id, 'owner')
+    INSERT INTO proxiima_core.vector_index_debt
+        (entity_id, model_id, dim, owner_id, op, generation, moved_from_generation, enqueued_at)
+    VALUES (NEW.entity_id, NEW.model_id, NEW.dim, NEW.owner_id, 'owner', 0, 0, clock_timestamp())
     ON CONFLICT (entity_id, model_id, dim) DO UPDATE
-        SET owner_id = EXCLUDED.owner_id, op = EXCLUDED.op, enqueued_at = now(),
+        SET owner_id = EXCLUDED.owner_id,
+            op = CASE WHEN proxiima_core.vector_index_debt.op = 'delete'
+                      THEN 'delete'
+                      ELSE 'owner' END,
+            generation = 0,
+            moved_from_generation = CASE
+                WHEN proxiima_core.vector_index_debt.op = 'delete'
+                 AND proxiima_core.vector_index_debt.generation > 0
+                THEN proxiima_core.vector_index_debt.generation
+                WHEN proxiima_core.vector_index_debt.op = 'delete'
+                 AND proxiima_core.vector_index_debt.moved_from_generation > 0
+                THEN proxiima_core.vector_index_debt.moved_from_generation
+                ELSE 0 END,
+            enqueued_at = CASE
+                WHEN proxiima_core.vector_index_debt.op = 'delete'
+                 AND (proxiima_core.vector_index_debt.generation > 0
+                      OR proxiima_core.vector_index_debt.moved_from_generation > 0)
+                THEN proxiima_core.vector_index_debt.enqueued_at
+                ELSE clock_timestamp() END,
+            xact = pg_current_xact_id();
+    RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION proxiima_core.memory_head_changed_index_debt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO proxiima_core.vector_index_debt
+        (entity_id, model_id, dim, owner_id, op, generation, moved_from_generation, enqueued_at)
+    SELECT eh.entity_id, eh.model_id, eh.dim, eh.owner_id, 'head', 0, 0, clock_timestamp()
+      FROM proxiima_core.embedding_heads eh
+     WHERE eh.entity_id = OLD.t
+        OR (TG_OP = 'UPDATE' AND eh.entity_id = NEW.t)
+    ON CONFLICT (entity_id, model_id, dim) DO UPDATE
+        SET owner_id = CASE WHEN proxiima_core.vector_index_debt.op = 'delete'
+                            THEN proxiima_core.vector_index_debt.owner_id
+                            ELSE EXCLUDED.owner_id END,
+            op = CASE WHEN proxiima_core.vector_index_debt.op IN ('delete', 'owner')
+                      THEN proxiima_core.vector_index_debt.op
+                      ELSE 'head' END,
+            generation = CASE WHEN proxiima_core.vector_index_debt.op = 'delete'
+                                   AND proxiima_core.vector_index_debt.generation > 0
+                              THEN proxiima_core.vector_index_debt.generation
+                              ELSE 0 END,
+            moved_from_generation = CASE
+                WHEN proxiima_core.vector_index_debt.op = 'delete'
+                 AND proxiima_core.vector_index_debt.moved_from_generation > 0
+                THEN proxiima_core.vector_index_debt.moved_from_generation
+                ELSE 0 END,
+            enqueued_at = CASE
+                WHEN proxiima_core.vector_index_debt.op = 'delete'
+                 AND (proxiima_core.vector_index_debt.generation > 0
+                      OR proxiima_core.vector_index_debt.moved_from_generation > 0)
+                THEN proxiima_core.vector_index_debt.enqueued_at
+                ELSE clock_timestamp() END,
             xact = pg_current_xact_id();
     RETURN NULL;
 END;

@@ -38,6 +38,17 @@ impl ConnectedStorage {
         self.0.try_embedding_maintenance_lock().await
     }
 
+    /// Drain up to `limit` payable host vector-index debt rows, returning how
+    /// many were settled (`0` when no payable debt remains or on a local-vector
+    /// store). Call in a loop until `0` before running a cutover sweep so
+    /// pre-existing metadata debt never masks a lost head.
+    ///
+    /// # Errors
+    /// Returns storage or host vector-index errors from the drain.
+    pub async fn drain_vector_index_debt(&self, limit: i64) -> Result<u64, StorageError> {
+        self.0.drain_vector_index_debt(limit).await
+    }
+
     /// Sweep orphan embedding rows and repair divergent vector-index heads.
     ///
     /// # Errors
@@ -46,6 +57,21 @@ impl ConnectedStorage {
         &self,
     ) -> Result<EmbeddingOrphanSweepOutcome, StorageError> {
         self.0.sweep_orphan_embedding_rows().await
+    }
+
+    /// Sweep up to `max_pages` pages of the host vector index starting strictly
+    /// after `after`, returning a continuation cursor when more pages remain.
+    /// Passing `max_pages == 0` performs no work and echoes `after` as `next`
+    /// without indicating exhaustion; pass `max_pages >= 1` when paging.
+    ///
+    /// # Errors
+    /// Returns storage errors from the sweep.
+    pub async fn sweep_vector_index_slice(
+        &self,
+        after: Option<&proxiima_core::storage_ports::VectorKey>,
+        max_pages: u32,
+    ) -> Result<proxiima_core::storage_ports::VectorIndexSweepOutcome, StorageError> {
+        self.0.sweep_vector_index_slice(after, max_pages).await
     }
 
     /// Enqueue missing embeddings under the supplied maintenance options.

@@ -76,6 +76,26 @@ pub(crate) async fn lock_owner_fence_exclusive_tx(
     lock_owner_fences(tx, std::slice::from_ref(owner), true).await
 }
 
+/// Non-blocking shared owner fence (`try_lock` counterpart of
+/// [`lock_owner_fence_shared_tx`]): returns `false` while a whole-owner erase
+/// or transfer holds the owner's exclusive fence. Allows background vector
+/// debt drain and sweep repair to serialize against whole-owner erase while
+/// keeping whole-owner erase at O(1) advisory locks regardless of corpus size.
+pub(crate) async fn try_lock_owner_fence_shared(
+    tx: &mut sqlx::PgConnection,
+    owner: OwnerId,
+) -> Result<bool, StorageError> {
+    sqlx::query_scalar(
+        "SELECT pg_try_advisory_xact_lock_shared(
+             hashtextextended('proxiima-owner-fence:' || $1::text, 0)
+         )",
+    )
+    .bind(owner.into_inner())
+    .fetch_one(tx)
+    .await
+    .map_err(map_err)
+}
+
 /// Acquire exclusive owner fences in canonical order for an ownership move.
 ///
 /// Transfer can add a sourced series to either endpoint's source scope while

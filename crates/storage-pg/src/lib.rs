@@ -604,6 +604,11 @@ pub struct PgStorage {
     embedding_runtime_policy: proxiima_core::EmbeddingRuntimePolicy,
     /// Where the chunk vectors live: [`Self::with_vector_index`].
     vectors: vector_index::StoreVectors,
+    /// Lease duration (seconds) honored by ordinary debt drain for active
+    /// publish intents and concurrent drain claims.
+    vector_debt_lease_seconds: f64,
+    /// Renewal interval for active publish intents and concurrent drain claims.
+    vector_debt_renew_interval: std::time::Duration,
     cold: Arc<dyn proxiima_core::ColdObjectStore>,
     /// Optional host-state participant invoked on the write-session
     /// transaction. `None` keeps existing
@@ -1287,6 +1292,8 @@ impl PgStorage {
             tuning,
             embedding_runtime_policy: proxiima_core::EmbeddingRuntimePolicy::default(),
             vectors,
+            vector_debt_lease_seconds: vector_index::DEBT_LEASE_SECONDS,
+            vector_debt_renew_interval: vector_index::DEBT_LEASE_RENEW_INTERVAL,
             cold: Arc::new(verbs::forget::MemoryColdStore),
             host_state: None,
         })
@@ -1601,6 +1608,79 @@ impl PgStorage {
             }
         }
         Ok(outcome)
+    }
+
+    /// Override the host vector-index publish/drain lease and renewal cadence
+    /// for deterministic timing tests.
+    #[cfg(any(test, feature = "testkit"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_vector_debt_lease_for_tests(
+        mut self,
+        lease: std::time::Duration,
+        renew_interval: std::time::Duration,
+    ) -> Self {
+        self.vector_debt_lease_seconds = lease.as_secs_f64();
+        self.vector_debt_renew_interval = renew_interval;
+        self
+    }
+
+    /// Drain up to `limit` payable host vector-index debt rows, returning how
+    /// many were settled (`0` when no payable debt remains or on a local-vector
+    /// store). Operator surface for cutover and maintenance loops, like
+    /// [`Self::sweep_vector_index_slice`].
+    ///
+    /// # Errors
+    ///
+    /// Returns storage or host vector-index errors from claiming, applying, or
+    /// finalizing the debt batch.
+    pub async fn drain_vector_index_debt(&self, limit: i64) -> Result<u64, StorageError> {
+        vector_index::drain_debt_with_lease(
+            &self.pool,
+            &self.platform_scope,
+            &self.vectors,
+            limit,
+            self.vector_debt_lease_seconds,
+            self.vector_debt_renew_interval,
+        )
+        .await
+    }
+
+    /// Compare up to `max_pages` keyset pages of the host vector index against
+    /// `embedding_heads`, starting strictly after `after`, and repair any
+    /// differences. Returns `next: Some(cursor)` when more pages remain so a
+    /// host can amortize full-store repair across maintenance ticks without
+    /// holding a lease for an entire store pass. A local-vector store returns an
+    /// empty outcome with `next: None`.
+    ///
+    /// Passing `max_pages == 0` performs no work and echoes `after` as `next`
+    /// without indicating exhaustion; callers driving a paginated sweep should
+    /// pass `max_pages >= 1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors from reading heads, querying the index, or
+    /// applying repairs.
+    pub async fn sweep_vector_index_slice(
+        &self,
+        after: Option<&proxiima_core::storage_ports::VectorKey>,
+        max_pages: u32,
+    ) -> Result<proxiima_core::storage_ports::VectorIndexSweepOutcome, StorageError> {
+        match &self.vectors {
+            vector_index::StoreVectors::Local => {
+                Ok(proxiima_core::storage_ports::VectorIndexSweepOutcome::default())
+            }
+            vector_index::StoreVectors::Remote(index) => {
+                vector_index::sweep_index_bounded(
+                    &self.pool,
+                    &self.platform_scope,
+                    index.as_ref(),
+                    after,
+                    Some(max_pages),
+                )
+                .await
+            }
+        }
     }
 
     /// Owner-agnostic embedding ANN health signals (backlog, orphan counts,

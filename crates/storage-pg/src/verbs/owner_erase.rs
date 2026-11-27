@@ -169,6 +169,8 @@ pub(crate) async fn erase_with_lifecycle(
     surfaces: &OwnerSurfaces,
     lifecycle: Option<crate::RegisteredHostStateLifecycle>,
 ) -> Result<OwnerEraseOutcome, StorageError> {
+    const MAX_INTENT_INVALIDATION_ROUNDS: usize = 16;
+
     let ErasePlan {
         owner,
         refusal,
@@ -179,16 +181,60 @@ pub(crate) async fn erase_with_lifecycle(
         let lifecycle = lifecycle.clone();
         let refusal = refusal.clone();
         async move {
-            let mut tx = begin_bulk_erase_tx(pool, platform).await?;
-            if let Some(reason) = erase_precondition(&mut tx, auth, owner, refusal).await? {
-                return Ok(EraseAttempt::Refused(refused(auth, reason)));
+            for _ in 0..MAX_INTENT_INVALIDATION_ROUNDS {
+                let mut tx = begin_bulk_erase_tx(pool, platform).await?;
+                if let Some(reason) =
+                    erase_precondition(&mut tx, auth, owner, refusal.clone()).await?
+                {
+                    return Ok(EraseAttempt::Refused(refused(auth, reason)));
+                }
+                let selected = erase_selected(
+                    &mut tx,
+                    owner,
+                    selection,
+                    surfaces,
+                    lifecycle.as_ref(),
+                    vectors,
+                )
+                .await;
+                let (cold_purge, settled_entities) = match selected {
+                    Ok(done) => done,
+                    Err(crate::vector_index::SettleDebtError::InFlightIntents(intents)) => {
+                        drop(tx);
+                        crate::vector_index::invalidate_publish_intents(pool, platform, &intents)
+                            .await?;
+                        continue;
+                    }
+                    Err(crate::vector_index::SettleDebtError::Storage(error)) => return Err(error),
+                };
+                // `Proxiima.ErasureExport.completionOrder`.
+                let outcome = match complete(
+                    auth,
+                    &mut tx,
+                    &cold_purge,
+                    vectors,
+                    owner,
+                    selection,
+                    &settled_entities,
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(crate::vector_index::SettleDebtError::InFlightIntents(intents)) => {
+                        drop(tx);
+                        crate::vector_index::invalidate_publish_intents(pool, platform, &intents)
+                            .await?;
+                        continue;
+                    }
+                    Err(crate::vector_index::SettleDebtError::Storage(error)) => return Err(error),
+                };
+                tx.commit().await.map_err(map_err)?;
+                return Ok(EraseAttempt::Completed(cold_purge, outcome));
             }
-            let cold_purge =
-                erase_selected(&mut tx, owner, selection, surfaces, lifecycle.as_ref()).await?;
-            // `Proxiima.ErasureExport.completionOrder`.
-            let outcome = complete(auth, &mut tx, &cold_purge, vectors, owner).await?;
-            tx.commit().await.map_err(map_err)?;
-            Ok(EraseAttempt::Completed(cold_purge, outcome))
+            Err(StorageError::Retryable(
+                "erase retried too many times while invalidating concurrent vector publish intents"
+                    .into(),
+            ))
         }
     })
     .await
@@ -202,9 +248,25 @@ async fn complete(
     cold_purge: &ColdPurgePlan,
     vectors: &crate::vector_index::StoreVectors,
     owner: OwnerId,
-) -> Result<OwnerEraseOutcome, StorageError> {
+    scope: SelectionScope<'_>,
+    settled_entities: &[uuid::Uuid],
+) -> Result<OwnerEraseOutcome, crate::vector_index::SettleDebtError> {
     // The erase is done only once the index deleted the vectors (#519).
-    crate::vector_index::settle_owner_debt(tx.as_mut(), vectors, owner).await?;
+    match scope {
+        SelectionScope::Owner => {
+            crate::vector_index::settle_owner_debt(
+                tx.as_mut(),
+                vectors,
+                owner,
+                settled_entities,
+                crate::vector_index::OwnerUnsentScope::SelectedTempTables,
+            )
+            .await?;
+        }
+        SelectionScope::Source(_) => {
+            crate::vector_index::settle_entity_debt(tx.as_mut(), vectors, settled_entities).await?;
+        }
+    }
     let (host_state_deleted, host_state_scrubbed) = final_host_state_counts(tx).await?;
     Ok(OwnerEraseOutcome::Completed {
         operation_id: auth.audit().operation_id(),
@@ -488,7 +550,8 @@ async fn erase_selected(
     scope: SelectionScope<'_>,
     surfaces: &OwnerSurfaces,
     lifecycle: Option<&crate::RegisteredHostStateLifecycle>,
-) -> Result<ColdPurgePlan, StorageError> {
+    vectors: &crate::vector_index::StoreVectors,
+) -> Result<(ColdPurgePlan, Vec<uuid::Uuid>), crate::vector_index::SettleDebtError> {
     // Core membership state is outside the spiice surface contract. Remove
     // the erased person's rows and the erased group's parent edge in this
     // transaction; membership triggers maintain the projection.
@@ -506,6 +569,27 @@ async fn erase_selected(
             .map_err(map_err)?;
     }
     open_erase_bookkeeping(tx, surfaces, owner, scope).await?;
+    let settled_entities = if matches!(vectors, crate::vector_index::StoreVectors::Remote(_)) {
+        let entities = lock_selected_embedding_keys(tx, owner, scope).await?;
+        let in_flight = match scope {
+            SelectionScope::Owner => {
+                crate::vector_index::find_in_flight_intents_for_owner(tx.as_mut(), owner, &entities)
+                    .await?
+            }
+            SelectionScope::Source(_) => {
+                crate::vector_index::find_in_flight_intents_for_entities(tx.as_mut(), &entities)
+                    .await?
+            }
+        };
+        if !in_flight.is_empty() {
+            return Err(crate::vector_index::SettleDebtError::InFlightIntents(
+                in_flight,
+            ));
+        }
+        entities
+    } else {
+        Vec::new()
+    };
     invoke_host_lifecycle_erase(tx, surfaces, owner, scope, lifecycle).await?;
     let (origins_revoked, publications_revoked) =
         revoke_original_publications(tx, owner, scope).await?;
@@ -557,7 +641,7 @@ async fn erase_selected(
     let mut entries = blobs.cold_purge.entries().to_vec();
     entries.sort_unstable_by(|a, b| a.object_key.cmp(&b.object_key));
     entries.dedup_by(|a, b| a.object_key == b.object_key);
-    Ok(ColdPurgePlan::from_entries(entries))
+    Ok((ColdPurgePlan::from_entries(entries), settled_entities))
 }
 
 fn validate_lifecycle_dispatch(
@@ -1046,6 +1130,113 @@ async fn lock_selected_lifecycle_targets(tx: &mut Tx<'_>) -> Result<(), StorageE
     .await
     .map_err(map_err)?;
     super::forget::lock_lifecycle_targets_tx(tx, &ids).await
+}
+
+/// Acquire canonical embedding key locks (level 5) before deletes or head
+/// updates write `vector_index_debt` (level 6), and return the entity IDs whose
+/// debt settlement must cover regardless of `debt.owner_id`.
+///
+/// - **Whole-owner erase** already holds `owner`'s exclusive fence, which
+///   excludes `insert_embeddings`, `drain_debt`, and `sweep_index::repair` for
+///   all of `owner`'s keys with O(1) advisory locks regardless of corpus size.
+///   It locks only rare cross-owner debt rows: foreign-owned debt belonging to
+///   transferred-in entities, and `owner`-owned debt whose entity was
+///   transferred out to another owner (serializing delete-fence allocation
+///   against the destination owner's concurrent writes).
+/// - **Source-scoped erase** holds `owner`'s fence shared and locks the full
+///   Level-2/3-frozen handle footprint (erased memories/goals plus surviving
+///   series predecessors whose `memory_head` may promote) so promotion triggers
+///   never deadlock with sweep or drain, while returning ONLY the strictly
+///   erased entities for destructive debt settlement so a retained
+///   predecessor's vector or in-flight overwrite is never deleted.
+async fn lock_selected_embedding_keys(
+    tx: &mut Tx<'_>,
+    owner: OwnerId,
+    scope: SelectionScope<'_>,
+) -> Result<Vec<uuid::Uuid>, StorageError> {
+    let owner_id = owner.into_inner();
+    match scope {
+        SelectionScope::Owner => {
+            let foreign_debt: Vec<(uuid::Uuid, String, i16)> = sqlx::query_as(
+                "SELECT d.entity_id, d.model_id, d.dim
+                   FROM proxiima_core.vector_index_debt d
+                  WHERE d.owner_id <> $1
+                    AND d.entity_id IN (
+                        SELECT memory_id FROM selected_memories
+                        UNION
+                        SELECT goal_id FROM selected_goals
+                    )",
+            )
+            .bind(owner_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_err)?;
+            let transferred_out_debt: Vec<(uuid::Uuid, String, i16)> = sqlx::query_as(
+                "SELECT d.entity_id, d.model_id, d.dim
+                   FROM proxiima_core.vector_index_debt d
+                  WHERE d.owner_id = $1
+                    AND (EXISTS (SELECT 1 FROM proxiima_core.memory_including_forgotten m
+                                  WHERE m.t = d.entity_id AND m.owner_id <> $1)
+                         OR EXISTS (SELECT 1 FROM proxiima_core.goal g
+                                     WHERE g.t = d.entity_id AND g.owner_id <> $1))",
+            )
+            .bind(owner_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_err)?;
+            let mut cross_owner_keys =
+                Vec::with_capacity(foreign_debt.len() + transferred_out_debt.len());
+            cross_owner_keys.extend(foreign_debt.iter().cloned());
+            cross_owner_keys.extend(transferred_out_debt);
+            super::fact_embeddings::lock_embedding_keys_batch(tx, &cross_owner_keys).await?;
+            let mut foreign_entities: Vec<uuid::Uuid> = foreign_debt
+                .into_iter()
+                .map(|(entity, _, _)| entity)
+                .collect();
+            foreign_entities.sort_unstable();
+            foreign_entities.dedup();
+            Ok(foreign_entities)
+        }
+        SelectionScope::Source(_) => {
+            let erased_entities: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT memory_id FROM selected_memories
+                 UNION
+                 SELECT goal_id FROM selected_goals",
+            )
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_err)?;
+            let lock_entities: Vec<uuid::Uuid> = sqlx::query_scalar(
+                "SELECT memory_id FROM selected_memories
+                 UNION
+                 SELECT goal_id FROM selected_goals
+                 UNION
+                 SELECT m.t
+                   FROM proxiima_core.memory_including_forgotten m
+                  WHERE m.owner_id = $1
+                    AND m.handle IN (SELECT handle FROM selected_memory_handles)",
+            )
+            .bind(owner_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_err)?;
+            let keys: Vec<(uuid::Uuid, String, i16)> = sqlx::query_as(
+                "SELECT entity_id, model_id, dim
+                   FROM proxiima_core.embedding_heads
+                  WHERE entity_id = ANY($1::uuid[])
+                 UNION
+                 SELECT entity_id, model_id, dim
+                   FROM proxiima_core.vector_index_debt
+                  WHERE entity_id = ANY($1::uuid[])",
+            )
+            .bind(&lock_entities)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_err)?;
+            super::fact_embeddings::lock_embedding_keys_batch(tx, &keys).await?;
+            Ok(erased_entities)
+        }
+    }
 }
 
 /// The upload object keys this scope must fence before it decides what it

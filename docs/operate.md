@@ -453,13 +453,15 @@ are all candidates, reaches 0.96 for that reason alone.
 
 Whole-owner erase is one transaction that holds the owner's exclusive fence,
 which excludes every writer that holds a lock on one of the owner's memories or
-Goals, so it takes no lock per memory or per Goal version. Its advisory locks
-are the owner fence, one per upload object key that another owner's upload also
-names (a mounted object), and one per published Fact the owner received by
-transfer (it excludes an origin check that cannot see the owner's row),
-independent of the number of memories, Goal versions and unshared uploads; the
-scale test asserts that the count at a tenth of the size equals the count at
-full size. A source-scoped erase holds the fence only shared and keeps its lock
+Goals, so it takes no lock per memory, per Goal version, or per owned vector
+index head. Its advisory locks are the owner fence, one per upload object key
+that another owner's upload also names (a mounted object), one per published
+Fact the owner received by transfer (it excludes an origin check that cannot
+see the owner's row), and, on a host vector index, one per pending cross-owner
+index debt row belonging to a transferred-in or transferred-out entity —
+independent of the number of memories, Goal versions, vector heads, and
+unshared uploads; the scale test
+asserts that the count at a tenth of the size equals the count at full size. A source-scoped erase holds the fence only shared and keeps its lock
 per selected memory, Goal version and origin Fact, as does a series erase.
 A single transaction that inserts memories takes one advisory lock per inserted
 memory, so split a bulk load into transactions well below the lock table's
@@ -513,7 +515,22 @@ debt are reported as `owed` (the drain removes them), and transfer keys under
 missing objects from the backup, rerun reconciliation, and keep the restored
 database closed to customer traffic until no referenced object is missing.
 Report-only reconciliation is not a readiness receipt. Embeddings can be
-rebuilt from retained content; lost content cannot.
+rebuilt from retained content; lost content cannot. When restoring PostgreSQL behind a retained
+[host vector index](host-integration.md#vector-index), quiesce pre-restore
+processes and let in-flight provider requests (and the 60-second publish/drain
+lease) drain or expire, then either switch to a fresh provider
+namespace or advance `proxiima_core.vector_index_generation_seq` strictly past
+the provider's highest recorded entry `generation`, delete `fence`,
+`owner_revision`, and `head_revision` (switch to a fresh namespace if the
+provider cannot report all four counters). Next settle both
+`proxiima_core.vector_index_debt` and `proxiima_core.vector_index_unsent_intents`
+via `ConnectedStorage::drain_vector_index_debt` — waiting out any fresh
+60-second lease stamped when reconciliation restores a crashed predecessor and
+repeating until **both tables are empty** (`count(*) = 0`) — before running a
+full sweep (which clears and requeues any lost live heads, including superseded
+and Goal-published versions, without pending debt masking them) and embedding
+reconciliation, so new publications and metadata repairs are never suppressed by
+retained counters.
 
 ## External deletion and publication
 

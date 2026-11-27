@@ -1085,6 +1085,7 @@ const TABLES: &[(&str, Rows)] = &[
     ("lexical_default", Rows::NoKind),
     ("lexical_languages", Rows::NoKind),
     ("maintenance_lease", Rows::NoKind),
+    ("vector_index_unsent_intents", Rows::NoKind),
     ("memory", Rows::Kind),
     ("memory_external_origin", Rows::Memory("t")),
     ("memory_head", Rows::Kind),

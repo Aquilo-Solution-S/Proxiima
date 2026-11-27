@@ -834,7 +834,7 @@ forgotten memory and another owner's memory are absent.
 By default a store keeps its chunk vectors in its own database, written in the
 transaction that changes their rows. A host can keep them in an index outside
 it instead, one index serving several stores: implement the `VectorIndex` port
-(`put`, `delete`, `set_owner`, `nearest`, `entries`) and register it with
+(`put_batch`, `delete`, `set_owner`, `set_head`, `nearest`, `entries`) and register it with
 `RuntimeBuilder::vector_index`. `InMemoryVectorIndex` is the reference
 implementation. The store's database needs no `vector` extension: the schema
 installs without the pgvector column, indexes and candidate functions when the
@@ -854,13 +854,16 @@ as a bearer token, and the router refuses any call without it. Its rustdoc
 lists the wire. The client speaks plaintext only to loopback or a named
 plaintext host.
 
-`nearest` returns a `VectorCandidatePage` with an explicit `CandidateBound`.
-A host `VectorIndex` returns finite scores in 0..=1; any other score fails the search.
-Keep the source's claim through local admission; fewer authorized results do
-not prove that the source was exhausted. The existing HTTP wire carries only
-candidates, so `VectorIndexClient` reports `Unknown` even for a short answer.
-The local index reports a short nonempty memory page as `Unknown` too, although
-only its exact scan of the owners' chunks returns one.
+`nearest` returns a `VectorCandidatePage` with an explicit `CandidateBound` and
+respects `VectorCandidateFilter::supersession` (`HeadsOnly` filters to entries
+whose `is_head` is true, so superseded series versions do not consume the
+candidate window). A host `VectorIndex` returns finite scores in 0..=1; any
+other score fails the search. Keep the source's claim through local admission;
+fewer authorized results do not prove that the source was exhausted. The
+existing HTTP wire carries only candidates, so `VectorIndexClient` reports
+`Unknown` even for a short answer. The local index reports a short nonempty
+memory page as `Unknown` too, although only its exact scan of the owners'
+chunks returns one.
 
 Rust callers receive this metadata as `MemorySearchPage::candidate_bound` and
 `SearchReadResponse::candidate_bound`. A known candidate budget takes
@@ -869,28 +872,124 @@ about the other source. See the [Search ledger](ledger.md#search). `has_more` st
 ranking horizon. The metadata is omitted from page serialization and from
 MCP/REST responses; deserializing a page yields `Unknown`.
 
-The store keeps each entity's head, its current version per space, and calls
-the index in this order:
+The store keeps each entity's head, its current version and monotonic
+publication generation per space, and calls the index in this order:
 
-- the embedding drain writes the head and `put`s the vectors before its claim
-  commits, so a job completes only once the index has them;
-- every later head change (forget, erase, transfer, a space purge, the orphan
-  sweep) leaves durable debt in its own transaction, paid at the start of the
-  next drain pass;
-- an erase pays its owner's debt before it commits, including what an earlier
-  forget left for the drain: an index failure fails the erase and its
-  transaction rolls back, while what the index already deleted stays deleted
-  until the sweep finds it and reconciliation embeds it again;
-- the orphan sweep compares the index's `entries` with the heads, deletes
-  entries no head names, moves entries to their head's owner, and deletes heads
-  the index lost so reconciliation embeds them again.
+- each remote publication synchronously validates provider limits via
+  `validate_put_batch`, commits durable `'delete'` write-ahead intent stamped
+  with a fresh monotonic generation from `vector_index_generation_seq` and a
+  dispatch-time lease (`clock_timestamp()`), releases its PostgreSQL
+  connection, pushes the batch in one `put_batch` call (periodically renewing
+  the 60-second lease so long healthy batches never expire, and preserving
+  prior debt for any trailing `VectorPutBatchError::unsent_indices` on partial
+  failure), and then commits `embedding_heads` and job claims only if that
+  intent still owns each key — holding at most one database connection at a
+  time and zero across the remote RPC;
+- every later head or series-head change (supersession, forget, restore, erase,
+  transfer, a space purge, the orphan sweep) leaves durable debt in its own
+  transaction, paid at the start of the next drain pass. The drain skips active
+  leased publish intents (`generation > 0`) and active concurrent drain claims
+  (`generation < 0`), durably stamps claimed rows under a renewable 60-second
+  lease (`generation = -claim_token`, invalidating any expired publish intent
+  before calling the provider), drops its database connection during the RPCs,
+  clears only rows still carrying that token, and returns the exact count of
+  rows finalized;
+- an erase pays its owner's (or strictly erased entity set's) debt before it
+  commits, including what an earlier forget or failed write left for the drain.
+  If any erased key still carries an active write-ahead publish intent, the
+  erase durably clears that intent in a separate committed transaction before
+  retrying and sending `delete(keys, fence)` with a strictly higher monotonic
+  `fence`, so a delayed in-flight `put_batch` with `generation <= fence` is
+  ignored by the provider and an invalidated publisher can never commit a head
+  even if the erase fails or rolls back;
+- the orphan sweep compares the index's `entries` with the heads (including
+  monotonic `generation`), deletes entries no head names with a fresh `fence`,
+  repairs entries whose owner or series-head status drifted via conditional
+  `set_owner`/`set_head`, and deletes heads the index lost — atomically
+  requeueing every deleted live memory (including superseded and Goal-published
+  versions) into `embedding_jobs` so the embedding drain rebuilds them alongside
+  reconciliation. Hosts with large stores can sweep incrementally across
+  ticks with `ConnectedStorage::sweep_vector_index_slice` using the returned
+  cursor.
 
-Every method is idempotent and may be repeated after a failure. A `put` the
-client gave up on can still reach the index after a later `delete`; the sweep
-deletes such an entry, since no head names it. Index hits are
-candidates either way: the store reads their memory rows under owner RLS before
-it uses their IDs or scores, so a wrong or stale entry costs results, never a
-row.
+Every method is idempotent and may be repeated after a failure. Providers must
+enforce monotonic fencing across both vector writes and metadata updates:
+
+- `put_batch`: ignore any item whose `generation` is less than or equal to the
+  key's stored `generation` or delete `fence`;
+- `delete(keys, fence)`: delete entries with `generation <= fence` and advance
+  each key's delete fence to at least `fence`;
+- `set_owner(targets, owner, revision)` and
+  `set_head(targets, is_head, revision)`: apply each update only when the
+  stored entry's `generation` equals `target.generation` and `revision`
+  strictly exceeds the entry's last applied owner or head revision (tracked
+  independently), so a delayed timeout retry can never overwrite a newer repair
+  or put.
+
+Index hits are candidates either way: in one SQL statement and one MVCC
+snapshot, the store authorizes memory rows under owner/Goal RLS, enforces
+`HeadsOnly` supersession, and verifies each candidate's `generation` against
+the committed `embedding_heads.vector_generation` (for both semantic and final
+hybrid admission), so an uncommitted or superseded entry can never supply a
+search score or expose a row while preserving any independently admitted
+lexical match.
+
+Upgrading a pre-`0074` host vector index or restoring PostgreSQL behind a
+retained external vector provider requires coordinating generations with
+`proxiima_core.vector_index_generation_seq` (the HTTP client refuses entries
+without a positive `generation`, and remote search ignores
+`embedding_heads.vector_generation = 0`). Before either cutover, quiesce all
+pre-cutover/pre-restore Proxiima processes (writers, erases, debt drain, and
+sweeps) and wait for any in-flight provider requests from those older processes
+to finish or expire so delayed requests cannot land after the cutover:
+
+- **Fresh provider namespace (recommended for upgrades and restores):** apply
+  `0074_vector_index_scale.sql` and the definitions pass (`migrate`), point the
+  store at an empty provider namespace (or reset the store's provider entries,
+  delete fences, and metadata revisions), and drain both
+  `proxiima_core.vector_index_debt` and
+  `proxiima_core.vector_index_unsent_intents` via
+  `ConnectedStorage::drain_vector_index_debt` until **both tables are empty**
+  (`count(*) = 0`). Because reconciling a deferred unsent marker can restore a
+  crashed predecessor publish intent with a fresh 60-second lease, a drain call
+  can return `0` while restored rows remain inside that window; if either table
+  is still non-empty after `drain_vector_index_debt` returns `0`, wait out the
+  60-second lease and drain again until both counts reach `0` (so no pending
+  debt row ever causes the sweep to skip a lost head, including on superseded
+  or Goal-published versions). Then run a full sweep
+  (`ConnectedStorage::sweep_orphan_embedding_rows` or
+  `ConnectedStorage::sweep_vector_index_slice` to `next: None`) to clear legacy
+  `vector_generation = 0` or lost heads and atomically requeue every
+  previously-indexed live memory (including superseded and Goal-published
+  versions) into `embedding_jobs`, then run
+  `ConnectedStorage::reconcile_embeddings` (to catch any live head that had no
+  prior `embedding_heads` row) and drain the embedding queue so every indexed
+  version is republished with `is_head` and positive monotonic generations.
+- **Coordinated in-place migration or restore behind a retained provider:**
+  quiesce pre-cutover processes and drain/expire in-flight provider requests
+  (including the 60-second live publish-intent lease).
+  For a legacy upgrade, assign a positive generation `G` (for example `1`) to
+  both `proxiima_core.embedding_heads.vector_generation` and every existing
+  provider entry (populating `is_head` from `memory_head`/`goal` and
+  initializing `owner_revision` and `head_revision` to `0`), then advance the
+  sequence with `SELECT setval('proxiima_core.vector_index_generation_seq', G, true)`.
+  For a PostgreSQL backup/PITR restore against a retained provider whose stored
+  generations, delete fences, `owner_revision`, or `head_revision` values can
+  exceed the restored sequence, advance the sequence strictly past the
+  provider's combined high-water mark across **all four** monotonic counters —
+  entry `generation`, delete `fence`, `owner_revision`, and `head_revision`
+  (`setval(..., max_provider_counter, true)`) — before resuming traffic (if the
+  provider cannot report its highest fence and metadata revisions, switch to a
+  fresh provider namespace instead). Then settle both
+  `proxiima_core.vector_index_debt` and
+  `proxiima_core.vector_index_unsent_intents` via
+  `ConnectedStorage::drain_vector_index_debt` — waiting out any fresh 60-second
+  lease created when reconciliation restores a crashed predecessor and repeating
+  until **both tables are empty** (`count(*) = 0`) — before running a full sweep
+  and embedding reconciliation so post-restore stray entries are deleted,
+  drifted owner/head metadata is repaired with revisions above the retained
+  high-water mark, and no pending debt row causes the sweep to skip any lost
+  live head (including superseded and Goal-published versions).
 
 Derivation reads all foreign origins within one call-wide deadline and refuses
 before writing if they cannot all be read. Lineage deduplicates foreign origins
